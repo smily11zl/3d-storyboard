@@ -1,4 +1,4 @@
-import { Suspense, useRef } from 'react';
+import { Suspense, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import {
   Environment,
@@ -10,7 +10,9 @@ import {
 } from '@react-three/drei';
 import { SceneModel } from './SceneModel';
 import { CameraIndicator } from './CameraIndicator';
+import { SelectionControls } from './SelectionControls';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as THREE from 'three';
 import styles from './FreeView.module.css';
 
 interface FreeViewProperties {
@@ -40,12 +42,38 @@ function AngleTracker({ displayReference }: { displayReference: React.RefObject<
 
 export function FreeView({ gltfData }: FreeViewProperties) {
   const angleDisplayReference = useRef<HTMLSpanElement>(null);
+  const transformInfoReference = useRef<HTMLSpanElement>(null);
+  const [selectedObject, setSelectedObject] = useState<THREE.Object3D | null>(null);
+  const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('translate');
 
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
         <span className={styles.label}>Free View</span>
       </div>
+      {/* Character transform toolbar — visible only while a character is selected */}
+      {selectedObject && (
+        <div className={styles.selectionBar}>
+          <span className={styles.selectionName}>人物: {selectedObject.name}</span>
+          <button
+            className={transformMode === 'translate' ? styles.modeButtonActive : styles.modeButton}
+            onClick={() => setTransformMode('translate')}
+            title="W"
+          >
+            移动 W
+          </button>
+          <button
+            className={transformMode === 'rotate' ? styles.modeButtonActive : styles.modeButton}
+            onClick={() => setTransformMode('rotate')}
+            title="E"
+          >
+            旋转 E
+          </button>
+          <span ref={transformInfoReference} className={styles.selectionInfo}>
+            位置 (0.00, 0.00, 0.00)
+          </span>
+        </div>
+      )}
       <div className={styles.canvasContainer}>
         {/* Angle overlay — top-left, updated via DOM directly */}
         <div className={styles.angleOverlay}>
@@ -83,6 +111,14 @@ export function FreeView({ gltfData }: FreeViewProperties) {
             {/* Blender-style camera wireframes, follow camera animation */}
             <CameraIndicator gltfData={gltfData} />
             <AngleTracker displayReference={angleDisplayReference} />
+            <SelectionControls
+              gltfData={gltfData}
+              selectedObject={selectedObject}
+              onSelect={setSelectedObject}
+              transformMode={transformMode}
+              onTransformModeChange={setTransformMode}
+              infoDisplayReference={transformInfoReference}
+            />
           </Suspense>
           {/* Blender-style XYZ rotation gizmo, bottom-right */}
           <GizmoHelper alignment="bottom-right" margin={[60, 60]}>

@@ -16,6 +16,17 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
   const threeCamera = useThree((state) => state.camera);
   const previousTimeReference = useRef(0);
   const animatedCameraNode = useRef<THREE.Object3D | null>(null);
+  // Name → node lookup for applying shared character transforms
+  const nodesByNameReference = useRef<Map<string, THREE.Object3D>>(new Map());
+
+  // Build name → node lookup once per scene copy
+  useEffect(() => {
+    const nameMap = new Map<string, THREE.Object3D>();
+    gltfData.scene.traverse((node) => {
+      if (node.name) nameMap.set(node.name, node);
+    });
+    nodesByNameReference.current = nameMap;
+  }, [gltfData]);
 
   // Find and cache the camera node once
   const findCameraNode = useCallback(() => {
@@ -32,6 +43,22 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
   // Animation sync + camera tracking — runs every frame
   useFrame((_, delta) => {
     const store = useStore.getState();
+
+    // Apply shared character transforms (set by Free View gizmo) so this
+    // scene copy matches the other viewport.
+    for (const [nodeName, transform] of Object.entries(store.characterTransforms)) {
+      const node = nodesByNameReference.current.get(nodeName);
+      if (node) {
+        node.position.set(transform.position[0], transform.position[1], transform.position[2]);
+        node.quaternion.set(
+          transform.quaternion[0],
+          transform.quaternion[1],
+          transform.quaternion[2],
+          transform.quaternion[3],
+        );
+      }
+    }
+
     if (!mixer || !store.shot || store.durationSeconds === 0) return;
 
     // Advance animation

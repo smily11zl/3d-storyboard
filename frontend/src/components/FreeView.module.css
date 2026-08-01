@@ -44,3 +44,46 @@
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
+
+.selectionBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background-color: var(--color-surface-raised, #1f1f1f);
+  border-bottom: 1px solid var(--color-border, #2a2a2a);
+  font-size: 12px;
+}
+
+.selectionName {
+  font-weight: 700;
+  color: var(--color-text-primary, #ffffff);
+  margin-right: 4px;
+}
+
+.selectionInfo {
+  margin-left: auto;
+  color: var(--color-text-secondary, #b3b3b3);
+  font-variant-numeric: tabular-nums;
+}
+
+.modeButton {
+  background-color: transparent;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: 4px;
+  color: var(--color-text-secondary, #b3b3b3);
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.modeButtonActive {
+  background-color: var(--color-accent, #1ed760);
+  border: 1px solid var(--color-accent, #1ed760);
+  border-radius: 4px;
+  color: #000000;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}

@@ -12,6 +12,19 @@ interface StoreState {
   framesPerSecond: number;
   animationStartTime: number;
 
+  /** Character (armature root) transforms set by the Free View gizmo.
+   *  Keyed by node name; both viewports apply them every frame so the
+   *  Camera View reflects character moves made in the Free View. */
+  characterTransforms: Record<
+    string,
+    { position: [number, number, number]; quaternion: [number, number, number, number] }
+  >;
+  setCharacterTransform: (
+    nodeName: string,
+    position: [number, number, number],
+    quaternion: [number, number, number, number],
+  ) => void;
+
   uploadFile: (file: File, force: boolean = false) => Promise<void>;
   clearError: () => void;
   setActiveCamera: (cameraName: string) => void;
@@ -30,6 +43,7 @@ export const useStore = create<StoreState>((set) => ({
   durationSeconds: 0,
   framesPerSecond: 24,
   animationStartTime: 0,
+  characterTransforms: {},
 
   uploadFile: async (file: File, force: boolean = false) => {
     set({ isLoading: true, errorMessage: null });
@@ -78,6 +92,13 @@ export const useStore = create<StoreState>((set) => ({
       return { isPlaying: playing };
     }),
   setCurrentTime: (time) => set({ currentTime: time }),
+  setCharacterTransform: (nodeName, position, quaternion) =>
+    set((state) => ({
+      characterTransforms: {
+        ...state.characterTransforms,
+        [nodeName]: { position, quaternion },
+      },
+    })),
   reset: () =>
     set({
       shot: null,
@@ -86,5 +107,6 @@ export const useStore = create<StoreState>((set) => ({
       activeCameraName: null,
       isPlaying: false,
       currentTime: 0,
+      characterTransforms: {},
     }),
 }));
