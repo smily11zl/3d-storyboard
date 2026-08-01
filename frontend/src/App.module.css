@@ -1,0 +1,44 @@
+.appContainer {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.viewportArea {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  min-height: 0;
+}
+
+.loadingOverlay {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.viewportPanel {
+  flex: 1;
+  background-color: var(--color-dark-card);
+  border-radius: var(--radius-standard);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.viewportLabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+}

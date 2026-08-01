@@ -1,0 +1,54 @@
+/* Spotify Dark Theme — CSS Custom Properties from ui-design/DESIGN.md */
+
+:root {
+  /* Colors — Backgrounds */
+  --color-deepest-black: #121212;
+  --color-dark-card: #181818;
+  --color-mid-dark: #1f1f1f;
+  --color-elevated-card: #252525;
+
+  /* Colors — Text */
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #b3b3b3;
+  --color-text-tertiary: #7c7c7c;
+
+  /* Colors — Accent & Semantic */
+  --color-accent-green: #1ed760;
+  --color-accent-green-border: #1db954;
+  --color-negative-red: #f3727f;
+  --color-warning-orange: #ffa42b;
+
+  /* Shadows — Spotify uses heavy shadows on dark backgrounds */
+  --shadow-heavy: rgba(0, 0, 0, 0.5) 0px 8px 24px;
+  --shadow-medium: rgba(0, 0, 0, 0.3) 0px 8px 8px;
+  --shadow-inset-border: rgb(18, 18, 18) 0px 1px 0px,
+    rgb(124, 124, 124) 0px 0px 0px 1px inset;
+
+  /* Border Radius — Pill geometry */
+  --radius-pill-full: 9999px;
+  --radius-pill-large: 500px;
+  --radius-standard: 8px;
+  --radius-card: 6px;
+  --radius-circle: 50%;
+
+  /* Spacing */
+  --space-unit: 8px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  background-color: var(--color-deepest-black);
+  color: var(--color-text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  overflow: hidden;
+}

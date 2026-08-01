@@ -1,0 +1,129 @@
+.uploadPage {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-deepest-black);
+}
+
+.dropZone {
+  width: 480px;
+  height: 320px;
+  border: 2px dashed var(--color-text-tertiary);
+  border-radius: var(--radius-standard);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.dropZone:hover {
+  border-color: var(--color-accent-green);
+  background-color: var(--color-dark-card);
+}
+
+.dropZoneActive {
+  border-color: var(--color-accent-green);
+  background-color: var(--color-dark-card);
+  border-style: solid;
+}
+
+.dropZoneIcon {
+  font-size: 48px;
+  color: var(--color-text-secondary);
+}
+
+.dropZoneTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.dropZoneSubtitle {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.fileInput {
+  display: none;
+}
+
+.errorBanner {
+  margin-top: 24px;
+  padding: 12px 24px;
+  background-color: var(--color-negative-red);
+  color: var(--color-deepest-black);
+  border-radius: var(--radius-pill-full);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dismissButton {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+}
+
+/* Top bar — compact mode */
+.topBar {
+  width: 100%;
+  height: 48px;
+  background-color: var(--color-mid-dark);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  box-shadow: var(--shadow-heavy);
+  z-index: 10;
+  position: relative;
+}
+
+.newUploadButton {
+  background-color: var(--color-mid-dark);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-text-tertiary);
+  border-radius: var(--radius-pill-full);
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.newUploadButton:hover {
+  border-color: var(--color-accent-green);
+}
+
+.topBarTitle {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--color-text-secondary);
+}
+
+.convertingLabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-accent-green);
+  margin-left: auto;
+}
+
+.errorLabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-negative-red);
+  margin-left: auto;
+}
