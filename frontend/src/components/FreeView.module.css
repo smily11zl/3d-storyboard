@@ -27,4 +27,20 @@
 .canvasContainer {
   flex: 1;
   min-height: 0;
+  position: relative;
+}
+
+.angleOverlay {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 5;
+  background-color: rgba(18, 18, 18, 0.75);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
