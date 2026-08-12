@@ -107,7 +107,8 @@ def get_scene_summary(gltf_filepath):
             if "camera" in camera_node:
                 camera_index = camera_node["camera"]
                 if camera_index < len(gltf_data.get("cameras", [])):
-                    camera_names.append(gltf_data["cameras"][camera_index].get("name", f"Camera_{camera_index}"))
+                    # 用节点名（= object 名）而非相机数据块名——与 glTF 节点一致
+                    camera_names.append(camera_node.get("name", f"Camera_{camera_index}"))
 
     animation_names = []
     for animation in gltf_data.get("animations", []):

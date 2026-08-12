@@ -12,6 +12,12 @@ interface StoreState {
   framesPerSecond: number;
   animationStartTime: number;
 
+  /** V2 layout state — which sidebar entry is active and whether the sidebar is collapsed */
+  sidebarMode: 'upload' | 'generate';
+  sidebarCollapsed: boolean;
+  setSidebarMode: (mode: 'upload' | 'generate') => void;
+  toggleSidebar: () => void;
+
   /** Character (armature root) transforms set by the Free View gizmo.
    *  Keyed by node name; both viewports apply them every frame so the
    *  Camera View reflects character moves made in the Free View. */
@@ -43,6 +49,8 @@ export const useStore = create<StoreState>((set) => ({
   durationSeconds: 0,
   framesPerSecond: 24,
   animationStartTime: 0,
+  sidebarMode: 'upload',
+  sidebarCollapsed: false,
   characterTransforms: {},
 
   uploadFile: async (file: File, force: boolean = false) => {
@@ -82,6 +90,8 @@ export const useStore = create<StoreState>((set) => ({
   },
 
   clearError: () => set({ errorMessage: null }),
+  setSidebarMode: (mode) => set({ sidebarMode: mode }),
+  toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   setActiveCamera: (cameraName) => set({ activeCameraName: cameraName }),
   setPlaying: (playing) =>
     set((state) => {

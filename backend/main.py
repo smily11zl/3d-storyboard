@@ -11,6 +11,9 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from backend.settings import router as settings_router
+from backend.generate import router as generate_router
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXPORT_SCRIPT = PROJECT_ROOT / "backend" / "export_shot.py"
 
@@ -24,6 +27,9 @@ GLTF_OUTPUT_NAME = "scene.gltf"
 EXPORTS_ROOT.mkdir(parents=True, exist_ok=True)
 
 application = FastAPI(title="Storyboard Shot Viewer")
+
+application.include_router(settings_router)
+application.include_router(generate_router)
 
 application.add_middleware(
     CORSMiddleware,
@@ -78,8 +84,9 @@ def parse_gltf_for_metadata(gltf_filepath: str) -> dict:
         for node in gltf_data.get("nodes", []):
             if "camera" in node:
                 camera_index = node["camera"]
-                camera_info = gltf_data["cameras"][camera_index]
-                camera_name = camera_info.get("name", f"camera_{camera_index}")
+                # 用节点名（= Blender object 名，如 cam_01_front），
+                # 不是相机数据块名（默认"摄像机"）——前端按名字在场景中查找节点
+                camera_name = node.get("name", f"camera_{camera_index}")
                 camera_list.append({"camera_name": camera_name})
 
     animation_list = []

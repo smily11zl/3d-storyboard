@@ -1,0 +1,149 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  background-color: var(--color-dark-card);
+  border: 1px solid var(--color-mid-dark);
+  border-radius: var(--radius-standard);
+  box-shadow: var(--shadow-heavy);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-mid-dark);
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.closeButton {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.closeButton:hover {
+  color: var(--color-text-primary);
+}
+
+.body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.configuredBadge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-accent-green);
+  background-color: rgba(30, 215, 96, 0.12);
+  border-radius: var(--radius-pill-full);
+  padding: 2px 8px;
+}
+
+.input {
+  background-color: var(--color-deepest-black);
+  border: 1px solid var(--color-mid-dark);
+  border-radius: var(--radius-standard);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--color-accent-green-border);
+}
+
+.warning {
+  font-size: 12px;
+  color: var(--color-warning-orange);
+}
+
+.feedbackOk {
+  font-size: 12px;
+  color: var(--color-accent-green);
+}
+
+.feedbackError {
+  font-size: 12px;
+  color: var(--color-negative-red);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-mid-dark);
+}
+
+.cancelButton,
+.saveButton {
+  border-radius: var(--radius-pill-full);
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+}
+
+.cancelButton {
+  background-color: transparent;
+  border: 1px solid var(--color-mid-dark);
+  color: var(--color-text-secondary);
+}
+
+.cancelButton:hover {
+  color: var(--color-text-primary);
+}
+
+.saveButton {
+  background-color: var(--color-accent-green);
+  color: #000000;
+}
+
+.saveButton:hover {
+  background-color: var(--color-accent-green-border);
+}
+
+.saveButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

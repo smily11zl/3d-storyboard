@@ -10,6 +10,18 @@ frontend/dist/
 
 # Runtime data
 exports/
+generate/
+
+# Test workspace (old pipeline, dev-only; 132MB) — not part of the product
+test/
+
+# Embedded Hermes agent environment — runtime data only;
+# keep the preconfigured template (config.yaml) and the generation skill
+.hermes-home/*
+!.hermes-home/config.yaml
+!.hermes-home/skills/
+.hermes-home/skills/*/
+!.hermes-home/skills/storyboard-scene-generator/
 
 # macOS
 .DS_Store

@@ -1,0 +1,14 @@
+model:
+  base_url: https://api.deepseek.com/v1
+  default: deepseek-v4-flash
+  provider: deepseek
+agent:
+  reasoning_overrides:
+    deepseek-v4-flash: high
+    deepseek-v4-pro: max
+platforms:
+  api_server:
+    enabled: true
+    extra:
+      host: 127.0.0.1
+      port: 8643
