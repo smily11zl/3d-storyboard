@@ -120,8 +120,8 @@ export function SelectionControls({
     const position = selectedObject.position;
     const rotation = selectedObject.rotation;
     infoDisplayReference.current.textContent =
-      `位置 (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})  ` +
-      `旋转 (${toDegrees(rotation.x)}°, ${toDegrees(rotation.y)}°, ${toDegrees(rotation.z)}°)`;
+      `Position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})  ` +
+      `Rotation (${toDegrees(rotation.x)}°, ${toDegrees(rotation.y)}°, ${toDegrees(rotation.z)}°)`;
   });
 
   /** Writes the current transform to the shared store so the OTHER

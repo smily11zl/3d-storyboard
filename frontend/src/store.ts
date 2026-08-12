@@ -49,7 +49,6 @@ export const useStore = create<StoreState>((set) => ({
   durationSeconds: 0,
   framesPerSecond: 24,
   animationStartTime: 0,
-  sidebarMode: 'upload',
   sidebarCollapsed: false,
   characterTransforms: {},
 
@@ -90,7 +89,6 @@ export const useStore = create<StoreState>((set) => ({
   },
 
   clearError: () => set({ errorMessage: null }),
-  setSidebarMode: (mode) => set({ sidebarMode: mode }),
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   setActiveCamera: (cameraName) => set({ activeCameraName: cameraName }),
   setPlaying: (playing) =>

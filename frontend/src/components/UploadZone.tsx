@@ -8,7 +8,6 @@ export function UploadZone() {
   const errorMessage = useStore((state) => state.errorMessage);
   const clearError = useStore((state) => state.clearError);
   const shot = useStore((state) => state.shot);
-  const reset = useStore((state) => state.reset);
 
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
@@ -73,17 +72,10 @@ export function UploadZone() {
     [handleFile],
   );
 
-  // When loading or shot exists, show compact top bar
+  // When loading or shot exists, show compact top bar (upload entry lives in the TopBar)
   if (isLoading || shot) {
     return (
       <div className={styles.topBar}>
-        <button
-          className={styles.newUploadButton}
-          onClick={reset}
-          title="Upload new file"
-        >
-          + New Upload
-        </button>
         {shot && (
           <span className={styles.topBarTitle}>
             {shot.export_hash.slice(0, 12)}

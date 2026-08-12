@@ -6,7 +6,6 @@ import { CameraView } from './components/CameraView';
 import { FreeView } from './components/FreeView';
 import { Timeline } from './components/Timeline';
 import { TopBar } from './components/TopBar';
-import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { SettingsModal } from './components/SettingsModal';
 import { useStore } from './store';
@@ -42,52 +41,9 @@ function cloneGLTF(source: GLTF): GLTF {
   };
 }
 
-/** AI 生成模式主内容区：查看器保持当前场景；无场景时提示。 */
-function GenerateContent({
-  hasContent,
-  showViewports,
-  gltfForCamera,
-  gltfForFree,
-  sceneLoading,
-}: {
-  hasContent: boolean;
-  showViewports: boolean;
-  gltfForCamera: GLTF | null;
-  gltfForFree: GLTF | null;
-  sceneLoading: boolean;
-}) {
-  if (showViewports) {
-    return (
-      <>
-        <div className={styles.viewportArea}>
-          <CameraView gltfData={gltfForCamera} />
-          <FreeView gltfData={gltfForFree} />
-        </div>
-        <Timeline />
-      </>
-    );
-  }
-  if (hasContent) {
-    return (
-      <div className={styles.loadingOverlay}>
-        <span>{sceneLoading ? 'Loading 3D scene...' : 'Converting...'}</span>
-      </div>
-    );
-  }
-  return (
-    <div className={styles.generatePlaceholder}>
-      <span className={styles.generateTitle}>AI 场景生成</span>
-      <span className={styles.generateHint}>
-        在左侧输入场景描述，生成或上传后在此查看 3D 场景
-      </span>
-    </div>
-  );
-}
-
 function App() {
   const shot = useStore((state) => state.shot);
   const isLoading = useStore((state) => state.isLoading);
-  const sidebarMode = useStore((state) => state.sidebarMode);
   const sidebarCollapsed = useStore((state) => state.sidebarCollapsed);
   const [gltfOriginal, setGltfOriginal] = useState<GLTF | null>(null);
   const [sceneLoading, setSceneLoading] = useState(false);
@@ -149,38 +105,21 @@ function App() {
     <div className={styles.appContainer}>
       <TopBar onOpenSettings={() => setSettingsOpen(true)} />
       <div className={styles.mainArea}>
-        {!sidebarCollapsed &&
-          (sidebarMode === 'generate' ? (
-            <ChatPanel onBack={() => useStore.getState().setSidebarMode('upload')} />
-          ) : (
-            <Sidebar />
-          ))}
+        {!sidebarCollapsed && <ChatPanel />}
         <div className={styles.contentArea}>
-          {sidebarMode === 'upload' ? (
-            <>
-              <UploadZone />
-              {hasContent && !gltfOriginal && (
-                <div className={styles.loadingOverlay}>
-                  <span>{sceneLoading ? 'Loading 3D scene...' : 'Converting...'}</span>
-                </div>
-              )}
-              {showViewports && (
-                <div className={styles.viewportArea}>
-                  <CameraView gltfData={gltfForCamera} />
-                  <FreeView gltfData={gltfForFree} />
-                </div>
-              )}
-              <Timeline />
-            </>
-          ) : (
-            <GenerateContent
-              hasContent={hasContent}
-              showViewports={showViewports}
-              gltfForCamera={gltfForCamera}
-              gltfForFree={gltfForFree}
-              sceneLoading={sceneLoading}
-            />
+          <UploadZone />
+          {hasContent && !gltfOriginal && (
+            <div className={styles.loadingOverlay}>
+              <span>{sceneLoading ? 'Loading 3D scene...' : 'Converting...'}</span>
+            </div>
           )}
+          {showViewports && (
+            <div className={styles.viewportArea}>
+              <CameraView gltfData={gltfForCamera} />
+              <FreeView gltfData={gltfForFree} />
+            </div>
+          )}
+          <Timeline />
         </div>
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}

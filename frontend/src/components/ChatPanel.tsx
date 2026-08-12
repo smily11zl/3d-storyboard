@@ -21,12 +21,8 @@ interface GenerateStatusResponse {
   };
 }
 
-interface ChatPanelProperties {
-  onBack: () => void;
-}
-
-/** V2 AI 生成聊天面板：输入描述 → SSE 流式显示过程 → 完成自动加载场景。 */
-export function ChatPanel({ onBack }: ChatPanelProperties) {
+/** AI generation chat panel: describe a scene → live SSE log → auto-load the result. */
+export function ChatPanel() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [description, setDescription] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -74,22 +70,22 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
   };
 
   const finishGeneration = async (taskId: string) => {
-    // 查询最终状态（done 携带 shot 元数据 / failed 携带错误）
+    // Fetch the final status (done carries shot metadata / failed carries the error)
     const response = await fetch(`/api/generate/${taskId}`);
     const data: GenerateStatusResponse = response.ok
       ? await response.json()
-      : { status: 'failed', error: '无法查询任务状态' };
+      : { status: 'failed', error: 'Failed to query task status' };
 
     if (data.status === 'done' && data.shot) {
       loadShotIntoViewer(data.shot);
-      appendMessage({ role: 'status', kind: 'success', content: '✅ 生成完成，场景已加载' });
+      appendMessage({ role: 'status', kind: 'success', content: '✅ Generation complete, scene loaded' });
     } else if (data.status === 'cancelled') {
-      appendMessage({ role: 'status', kind: 'info', content: '已取消生成' });
+      appendMessage({ role: 'status', kind: 'info', content: 'Generation cancelled' });
     } else {
       appendMessage({
         role: 'status',
         kind: 'error',
-        content: `❌ 生成失败：${data.error || '未知错误'}`,
+        content: `❌ Generation failed: ${data.error || 'Unknown error'}`,
       });
       setRetryDescription(lastPromptReference.current);
     }
@@ -117,7 +113,7 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || `提交失败 (${response.status})`);
+        throw new Error(errorData.detail || `Submit failed (${response.status})`);
       }
       const { task_id } = await response.json();
       setActiveTaskId(task_id);
@@ -144,13 +140,14 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
       source.onerror = () => {
         source.close();
         eventSourceReference.current = null;
-        // 流意外断开（可能任务已结束但 status 事件丢失）——查询最终状态收尾
+        // Stream dropped (the task may have finished without a status event) —
+        // query the final status to wrap up.
         if (isGeneratingReference.current) {
           void finishGeneration(task_id);
         }
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : '未知错误';
+      const message = error instanceof Error ? error.message : 'Unknown error';
       appendMessage({ role: 'status', kind: 'error', content: `❌ ${message}` });
       isGeneratingReference.current = false;
       setIsGenerating(false);
@@ -166,7 +163,7 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
     }
     eventSourceReference.current?.close();
     eventSourceReference.current = null;
-    appendMessage({ role: 'status', kind: 'info', content: '已发送停止请求…' });
+    appendMessage({ role: 'status', kind: 'info', content: 'Stop requested…' });
     isGeneratingReference.current = false;
     setIsGenerating(false);
     setActiveTaskId(null);
@@ -181,18 +178,16 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
   return (
     <div className={styles.chatPanel}>
       <div className={styles.chatHeader}>
-        <button className={styles.backButton} onClick={onBack} title="返回">
-          ←
-        </button>
-        <span className={styles.chatTitle}>AI 生成</span>
+        <span className={styles.chatTitle}>AI Generate</span>
       </div>
 
       <div className={styles.messageList}>
         {messages.length === 0 && (
           <div className={styles.emptyHint}>
-            描述一个场景，例如：
+            Describe a scene, e.g.
             <br />
-            “两个人在咖啡店对话，一个男人正脸镜头，一个女人背影镜头”
+            “Two people talking in a coffee shop — one man head-on shot, one woman
+            back shot”
           </div>
         )}
         {messages.map((message) => (
@@ -219,7 +214,7 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
         {isGenerating && (
           <div className={styles.generatingIndicator}>
             <span className={styles.spinner} />
-            正在生成…
+            Generating…
           </div>
         )}
         <div ref={messagesEndReference} />
@@ -229,7 +224,7 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
         <div className={styles.inputArea}>
           <textarea
             className={styles.input}
-            placeholder="输入场景描述…"
+            placeholder="Describe a scene…"
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             onKeyDown={(event) => {
@@ -243,7 +238,7 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
           <div className={styles.inputActions}>
             {retryDescription && (
               <button className={styles.retryButton} onClick={handleRetry}>
-                重试上次
+                Retry last
               </button>
             )}
             <button
@@ -251,7 +246,7 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
               onClick={() => void handleSubmit()}
               disabled={!description.trim()}
             >
-              生成
+              Generate
             </button>
           </div>
         </div>
@@ -260,7 +255,7 @@ export function ChatPanel({ onBack }: ChatPanelProperties) {
       {isGenerating && (
         <div className={styles.stopArea}>
           <button className={styles.stopButton} onClick={() => void handleStop()}>
-            ■ 停止生成
+            ■ Stop
           </button>
         </div>
       )}

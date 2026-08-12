@@ -36,7 +36,7 @@ export function SettingsModal({ onClose }: SettingsModalProperties) {
         setKeyConfigured(data.key_configured);
         setAgentRunning(data.agent_running);
       })
-      .catch(() => setFeedback({ ok: false, text: '无法读取当前设置' }));
+      .catch(() => setFeedback({ ok: false, text: 'Failed to load current settings' }));
   }, []);
 
   const handleSave = async () => {
@@ -60,13 +60,13 @@ export function SettingsModal({ onClose }: SettingsModalProperties) {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.detail || `保存失败 (${response.status})`);
+        throw new Error(data.detail || `Save failed (${response.status})`);
       }
       setApiKey('');
       setKeyConfigured(true);
-      setFeedback({ ok: true, text: '设置已保存，Agent 服务已重启' });
+      setFeedback({ ok: true, text: 'Settings saved, agent service restarted' });
     } catch (error) {
-      const message = error instanceof Error ? error.message : '未知错误';
+      const message = error instanceof Error ? error.message : 'Unknown error';
       setFeedback({ ok: false, text: message });
     } finally {
       setSaving(false);
@@ -77,8 +77,8 @@ export function SettingsModal({ onClose }: SettingsModalProperties) {
     <div className={styles.overlay} onClick={onClose}>
       <div className={styles.modal} onClick={(event) => event.stopPropagation()}>
         <div className={styles.header}>
-          <span className={styles.title}>API 设置</span>
-          <button className={styles.closeButton} onClick={onClose} aria-label="关闭">
+          <span className={styles.title}>API Settings</span>
+          <button className={styles.closeButton} onClick={onClose} aria-label="Close">
             ✕
           </button>
         </div>
@@ -90,7 +90,7 @@ export function SettingsModal({ onClose }: SettingsModalProperties) {
           </label>
 
           <label className={styles.field}>
-            <span className={styles.label}>模型</span>
+            <span className={styles.label}>Model</span>
             <select
               className={styles.input}
               value={model}
@@ -105,7 +105,7 @@ export function SettingsModal({ onClose }: SettingsModalProperties) {
           </label>
 
           <label className={styles.field}>
-            <span className={styles.label}>推理级别</span>
+            <span className={styles.label}>Reasoning level</span>
             <select
               className={styles.input}
               value={reasoningLevel}
@@ -122,19 +122,21 @@ export function SettingsModal({ onClose }: SettingsModalProperties) {
           <label className={styles.field}>
             <span className={styles.label}>
               API Key
-              {keyConfigured && <span className={styles.configuredBadge}>已配置</span>}
+              {keyConfigured && <span className={styles.configuredBadge}>Configured</span>}
             </span>
             <input
               className={styles.input}
               type="password"
-              placeholder={keyConfigured ? '已配置（输入新 key 可更换）' : '输入 DeepSeek API key'}
+              placeholder={
+                keyConfigured ? 'Configured (enter a new key to replace)' : 'Enter DeepSeek API key'
+              }
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
             />
           </label>
 
           {!agentRunning && (
-            <div className={styles.warning}>⚠ Agent 服务未运行，AI 生成不可用</div>
+            <div className={styles.warning}>⚠ Agent service not running — AI generation unavailable</div>
           )}
 
           {feedback && (
@@ -146,10 +148,10 @@ export function SettingsModal({ onClose }: SettingsModalProperties) {
 
         <div className={styles.footer}>
           <button className={styles.cancelButton} onClick={onClose}>
-            取消
+            Cancel
           </button>
           <button className={styles.saveButton} onClick={handleSave} disabled={saving}>
-            {saving ? '保存中…' : '保存'}
+            {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>

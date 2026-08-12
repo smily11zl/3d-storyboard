@@ -78,8 +78,8 @@
 }
 
 .input {
-  background-color: var(--color-deepest-black);
-  border: 1px solid var(--color-mid-dark);
+  background-color: #121212;
+  border: 1px solid #3d3d3d;
   border-radius: var(--radius-standard);
   color: var(--color-text-primary);
   font-size: 13px;
@@ -125,13 +125,14 @@
 }
 
 .cancelButton {
-  background-color: transparent;
-  border: 1px solid var(--color-mid-dark);
-  color: var(--color-text-secondary);
+  background-color: #1f1f1f;
+  border: 1px solid #4a4a4a;
+  color: #cccccc;
 }
 
 .cancelButton:hover {
-  color: var(--color-text-primary);
+  color: #ffffff;
+  background-color: #2a2a2a;
 }
 
 .saveButton {

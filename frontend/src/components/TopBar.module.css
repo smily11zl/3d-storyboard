@@ -5,45 +5,60 @@
   height: 48px;
   padding: 0 16px;
   background-color: var(--color-deepest-black);
-  border-bottom: 1px solid var(--color-mid-dark);
+  border-bottom: 1px solid #2e2e2e;
   flex-shrink: 0;
 }
 
-.leftGroup,
-.rightGroup {
+.leftGroup {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.productName {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--color-text-primary);
-  letter-spacing: 0.2px;
-}
-
 .iconButton {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--radius-standard);
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-pill-full);
-  border: 1px solid var(--color-mid-dark);
-  background-color: var(--color-dark-card);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: 14px;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  line-height: 1;
 }
 
 .iconButton:hover {
-  background-color: var(--color-elevated-card);
   color: var(--color-text-primary);
+  background-color: #252525;
 }
 
-.hamburger,
-.gearIcon {
-  line-height: 1;
+.logo {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.uploadButton {
+  border-radius: var(--radius-pill-full);
+  padding: 7px 18px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid #4a4a4a;
+  background-color: #252525;
+  color: #e8e8e8;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.uploadButton:hover {
+  color: #ffffff;
+  background-color: #333333;
+}
+
+.fileInput {
+  display: none;
 }

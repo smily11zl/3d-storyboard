@@ -75,7 +75,7 @@ export function FreeView({ gltfData }: FreeViewProperties) {
             }}
             title="Tab"
           >
-            浏览模式
+            Browse
           </button>
           <button
             className={viewMode === 'edit' ? styles.modeButtonActive : styles.modeButton}
@@ -85,30 +85,30 @@ export function FreeView({ gltfData }: FreeViewProperties) {
             }}
             title="Tab"
           >
-            编辑模式
+            Edit
           </button>
         </div>
       </div>
       {/* Character transform toolbar — visible only while a character is selected */}
       {selectedObject && (
         <div className={styles.selectionBar}>
-          <span className={styles.selectionName}>人物: {selectedObject.name}</span>
+          <span className={styles.selectionName}>Character: {selectedObject.name}</span>
           <button
             className={transformMode === 'translate' ? styles.modeButtonActive : styles.modeButton}
             onClick={() => setTransformMode('translate')}
             title="W"
           >
-            移动 W
+            Move W
           </button>
           <button
             className={transformMode === 'rotate' ? styles.modeButtonActive : styles.modeButton}
             onClick={() => setTransformMode('rotate')}
             title="E"
           >
-            旋转 E
+            Rotate E
           </button>
           <span ref={transformInfoReference} className={styles.selectionInfo}>
-            位置 (0.00, 0.00, 0.00)
+            Position (0.00, 0.00, 0.00)
           </span>
         </div>
       )}
@@ -133,9 +133,9 @@ export function FreeView({ gltfData }: FreeViewProperties) {
             <Lightformer intensity={1.0} position={[5, 1, 5]} rotation-y={-Math.PI / 4} scale={[8, 1, 1]} />
           </Environment>
           <Suspense fallback={null}>
-            {/* No artificial Grid here — the scene's own ground plane
-                (平面) is the floor. A second grid at y=0 caused
-                z-fighting flicker while orbiting. */}
+            {/* No artificial Grid here — the scene's own ground plane is the
+                floor. A second grid at y=0 caused z-fighting flicker while
+                orbiting. */}
             <SceneModel
               gltfData={gltfData}
               cameraName={null}

@@ -2,6 +2,8 @@
 
 A web application for viewing Blender 3D storyboard shots directly in the browser, with an **AI scene generator** built in. Upload a `.blend` file (or describe a scene in text) and view it in an interactive dual-viewport viewer — no Blender installation needed on the viewing machine.
 
+![Product screenshot](docs/screenshot_for_3d.png)
+
 ## Features
 
 - **Upload & convert** — drag-and-drop (or click) a `.blend` file; the backend converts it to glTF (`.gltf` + `.bin` + textures) using headless Blender
