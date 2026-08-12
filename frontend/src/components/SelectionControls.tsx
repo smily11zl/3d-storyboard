@@ -12,6 +12,8 @@ interface SelectionControlsProperties {
   transformMode: 'translate' | 'rotate';
   onTransformModeChange: (mode: 'translate' | 'rotate') => void;
   infoDisplayReference: React.RefObject<HTMLSpanElement | null>;
+  /** Only respond to clicks/keyboard when in edit mode */
+  enabled: boolean;
 }
 
 /** Finds the armature root (character container) that drives a skinned
@@ -38,6 +40,7 @@ export function SelectionControls({
   transformMode,
   onTransformModeChange,
   infoDisplayReference,
+  enabled,
 }: SelectionControlsProperties) {
   const { camera, gl } = useThree();
   const raycasterReference = useRef(new THREE.Raycaster());
@@ -49,6 +52,7 @@ export function SelectionControls({
 
   // Click to select a character (skinned mesh); click empty space to deselect
   useEffect(() => {
+    if (!enabled) return;
     const handleClick = (event: MouseEvent) => {
       if (draggingReference.current) return; // ignore click after gizmo drag
 
@@ -68,10 +72,11 @@ export function SelectionControls({
 
     gl.domElement.addEventListener('click', handleClick);
     return () => gl.domElement.removeEventListener('click', handleClick);
-  }, [camera, gl, gltfData.scene, onSelect]);
+  }, [camera, gl, gltfData.scene, onSelect, enabled]);
 
-  // Keyboard shortcuts: W = move, E = rotate, Esc = deselect
+  // Keyboard shortcuts: W = move, E = rotate, Esc = deselect (edit mode only)
   useEffect(() => {
+    if (!enabled) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'w' || event.key === 'W') onTransformModeChange('translate');
       if (event.key === 'e' || event.key === 'E') onTransformModeChange('rotate');
@@ -79,7 +84,7 @@ export function SelectionControls({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onSelect, onTransformModeChange]);
+  }, [onSelect, onTransformModeChange, enabled]);
 
   // Emissive highlight on the selected character; restore on change/deselect
   useEffect(() => {

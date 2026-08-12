@@ -87,3 +87,9 @@
   font-weight: 700;
   cursor: pointer;
 }
+
+.modeSwitcher {
+  display: flex;
+  gap: 6px;
+  margin-left: 12px;
+}

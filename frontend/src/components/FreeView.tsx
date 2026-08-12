@@ -1,16 +1,16 @@
-import { Suspense, useRef, useState } from 'react';
+import { Suspense, useRef, useState, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import {
   Environment,
   Lightformer,
   OrbitControls,
-  Grid,
   GizmoHelper,
   GizmoViewport,
 } from '@react-three/drei';
 import { SceneModel } from './SceneModel';
 import { CameraIndicator } from './CameraIndicator';
 import { SelectionControls } from './SelectionControls';
+import { BrowseControls } from './BrowseControls';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 import styles from './FreeView.module.css';
@@ -45,11 +45,49 @@ export function FreeView({ gltfData }: FreeViewProperties) {
   const transformInfoReference = useRef<HTMLSpanElement>(null);
   const [selectedObject, setSelectedObject] = useState<THREE.Object3D | null>(null);
   const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('translate');
+  // 'browse' = game-style camera movement (WASD+QE); 'edit' = character gizmo (W/E)
+  const [viewMode, setViewMode] = useState<'browse' | 'edit'>('browse');
+
+  // Tab toggles between browse and edit modes
+  useEffect(() => {
+    const handleTab = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        setViewMode((mode) => (mode === 'browse' ? 'edit' : 'browse'));
+        setSelectedObject(null); // clear character selection when switching
+      }
+    };
+    window.addEventListener('keydown', handleTab);
+    return () => window.removeEventListener('keydown', handleTab);
+  }, []);
 
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
         <span className={styles.label}>Free View</span>
+        {/* Mode indicator + switch */}
+        <div className={styles.modeSwitcher}>
+          <button
+            className={viewMode === 'browse' ? styles.modeButtonActive : styles.modeButton}
+            onClick={() => {
+              setViewMode('browse');
+              setSelectedObject(null);
+            }}
+            title="Tab"
+          >
+            浏览模式
+          </button>
+          <button
+            className={viewMode === 'edit' ? styles.modeButtonActive : styles.modeButton}
+            onClick={() => {
+              setViewMode('edit');
+              setSelectedObject(null);
+            }}
+            title="Tab"
+          >
+            编辑模式
+          </button>
+        </div>
       </div>
       {/* Character transform toolbar — visible only while a character is selected */}
       {selectedObject && (
@@ -95,14 +133,9 @@ export function FreeView({ gltfData }: FreeViewProperties) {
             <Lightformer intensity={1.0} position={[5, 1, 5]} rotation-y={-Math.PI / 4} scale={[8, 1, 1]} />
           </Environment>
           <Suspense fallback={null}>
-            <Grid
-              position={[0, 0, 0]}
-              args={[20, 20]}
-              cellColor="#333333"
-              sectionColor="#222222"
-              fadeDistance={30}
-              infiniteGrid
-            />
+            {/* No artificial Grid here — the scene's own ground plane
+                (平面) is the floor. A second grid at y=0 caused
+                z-fighting flicker while orbiting. */}
             <SceneModel
               gltfData={gltfData}
               cameraName={null}
@@ -118,7 +151,9 @@ export function FreeView({ gltfData }: FreeViewProperties) {
               transformMode={transformMode}
               onTransformModeChange={setTransformMode}
               infoDisplayReference={transformInfoReference}
+              enabled={viewMode === 'edit'}
             />
+            <BrowseControls enabled={viewMode === 'browse'} />
           </Suspense>
           {/* Blender-style XYZ rotation gizmo, bottom-right */}
           <GizmoHelper alignment="bottom-right" margin={[60, 60]}>
