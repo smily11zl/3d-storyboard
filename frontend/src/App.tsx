@@ -105,7 +105,11 @@ function App() {
     <div className={styles.appContainer}>
       <TopBar onOpenSettings={() => setSettingsOpen(true)} />
       <div className={styles.mainArea}>
-        {!sidebarCollapsed && <ChatPanel />}
+        {/* Keep ChatPanel mounted (CSS-hidden when collapsed) so the chat
+            history survives toggling the sidebar */}
+        <div className={sidebarCollapsed ? styles.hidden : undefined}>
+          <ChatPanel />
+        </div>
         <div className={styles.contentArea}>
           <UploadZone />
           {hasContent && !gltfOriginal && (

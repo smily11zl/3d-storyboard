@@ -12,6 +12,10 @@
   min-height: 0;
 }
 
+.hidden {
+  display: none;
+}
+
 .contentArea {
   flex: 1;
   display: flex;

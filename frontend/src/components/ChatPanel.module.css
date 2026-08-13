@@ -63,7 +63,16 @@
   max-width: 100%;
 }
 
-.message_tool {
+.message_tool_start {
+  align-self: flex-start;
+  width: 100%;
+}
+
+.message_tool_end {
+  align-self: flex-start;
+}
+
+.message_tool_output {
   align-self: flex-start;
   width: 100%;
 }
@@ -73,17 +82,58 @@
   font-size: 12px;
 }
 
-.toolBlock {
-  background-color: #121212;
-  border: 1px solid #3d3d3d;
-  border-radius: var(--radius-standard);
-  padding: 8px 10px;
+/* Tool call: distinct blue-grey surface, clearly separated from agent text */
+.toolCallBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background-color: #16202e;
+  border: 1px solid #2d4055;
+  border-left: 3px solid #3d6a99;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.toolCallHeader {
   font-size: 11px;
+  font-weight: 700;
+  color: #7fb0e0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.toolCallArgs {
+  font-size: 11px;
+  color: #8fa3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Tool completion: inline small line with duration */
+.toolDoneLine {
+  font-size: 11px;
+  color: #5fbf8a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.toolDuration {
   color: var(--color-text-tertiary);
+  margin-left: 4px;
+}
+
+/* Tool output: compact code block */
+.toolOutputBlock {
+  background-color: #101418;
+  border: 1px solid #2d4055;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #8fa3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
-  max-height: 120px;
+  max-height: 100px;
   overflow-y: auto;
 }
 

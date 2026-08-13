@@ -86,8 +86,31 @@ async def stream_from_agent(description: str, output_dir: Path):
                 event_type = event.get("type", "")
                 if event_type == "response.output_text.delta":
                     yield {"type": "text", "content": event.get("delta", "")}
-                elif event_type in ("tool.start", "tool.progress", "tool.complete"):
-                    yield {"type": "tool", "content": json.dumps(event, ensure_ascii=False)}
+                elif event_type == "response.output_item.added":
+                    item = event.get("item", {})
+                    if item.get("type") == "function_call":
+                        arguments = item.get("arguments", "")
+                        if not isinstance(arguments, str):
+                            arguments = json.dumps(arguments, ensure_ascii=False)
+                        yield {
+                            "type": "tool_start",
+                            "name": item.get("name", "tool"),
+                            "arguments": arguments,
+                        }
+                elif event_type == "response.output_item.done":
+                    item = event.get("item", {})
+                    if item.get("type") == "function_call":
+                        yield {
+                            "type": "tool_end",
+                            "name": item.get("name", "tool"),
+                            "status": item.get("status", "completed"),
+                        }
+                    elif item.get("type") == "function_call_output":
+                        output = item.get("output", "")
+                        # Hermes 有时返回 {"type": "text", "text": "..."} 结构
+                        if not isinstance(output, str):
+                            output = json.dumps(output, ensure_ascii=False)
+                        yield {"type": "tool_output", "content": output[:500]}
                 elif event_type == "error" or event.get("finish_reason") == "error":
                     error_message = event.get("error", {}).get("message", "未知错误")
                     raise RuntimeError(f"Agent 生成失败: {error_message}")
@@ -182,7 +205,9 @@ async def run_generation_task(task_id: str) -> None:
             async for event in stream_from_agent(record["description"], output_dir):
                 if record["cancel_event"].is_set():
                     break
-                log_parts.append(f"[{event['type']}] {event['content']}")
+                log_parts.append(
+                    f"[{event['type']}] {event.get('content', json.dumps({k: v for k, v in event.items() if k != 'type'}, ensure_ascii=False)[:200])}"
+                )
                 await record["queue"].put(event)
                 if event["type"] == "done":
                     break

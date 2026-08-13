@@ -4,8 +4,10 @@ import styles from './ChatPanel.module.css';
 
 interface ChatMessage {
   id: number;
-  role: 'user' | 'agent' | 'tool' | 'status';
+  role: 'user' | 'agent' | 'tool_start' | 'tool_end' | 'tool_output' | 'status';
   content: string;
+  name?: string;
+  duration?: number;
   kind?: 'error' | 'success' | 'info';
 }
 
@@ -16,6 +18,7 @@ interface GenerateStatusResponse {
     export_hash: string;
     gltf_output_url: string;
     cameras: { camera_name: string }[];
+    animations: { animation_name: string; animation_length_seconds: number }[];
     duration_seconds: number;
     frames_per_second: number;
   };
@@ -28,11 +31,13 @@ export function ChatPanel() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [retryDescription, setRetryDescription] = useState<string | null>(null);
+  const [waitingModel, setWaitingModel] = useState(false);
   const eventSourceReference = useRef<EventSource | null>(null);
   const messagesEndReference = useRef<HTMLDivElement | null>(null);
   const nextMessageId = useRef(1);
   const lastPromptReference = useRef<string | null>(null);
   const isGeneratingReference = useRef(false);
+  const lastToolStartTime = useRef<number | null>(null);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -55,7 +60,7 @@ export function ChatPanel() {
         export_hash: shot.export_hash,
         gltf_output_url: shot.gltf_output_url,
         cameras: shot.cameras,
-        animations: [],
+        animations: shot.animations ?? [],
         duration_seconds: shot.duration_seconds,
         frames_per_second: shot.frames_per_second,
       },
@@ -120,18 +125,46 @@ export function ChatPanel() {
 
       const source = new EventSource(`/api/generate/${task_id}/stream`);
       eventSourceReference.current = source;
+      setWaitingModel(true); // covers the initial model-thinking gap
       source.onmessage = (event) => {
-        let data: { type: string; content: string };
+        let data: { type: string; content?: string; name?: string; arguments?: string };
         try {
           data = JSON.parse(event.data);
         } catch {
           return;
         }
+        setWaitingModel(false);
+        // Defensive: some payloads carry objects instead of strings
+        const toText = (value: unknown): string =>
+          typeof value === 'string' ? value : JSON.stringify(value);
         if (data.type === 'text' && data.content) {
-          appendMessage({ role: 'agent', content: data.content });
-        } else if (data.type === 'tool' && data.content) {
-          appendMessage({ role: 'tool', content: data.content });
+          appendMessage({ role: 'agent', content: toText(data.content) });
+          // After agent text, the next thing is usually a tool call or done —
+          // show the waiting hint again until the next event arrives.
+          setWaitingModel(true);
+        } else if (data.type === 'tool_start') {
+          lastToolStartTime.current = Date.now();
+          appendMessage({
+            role: 'tool_start',
+            name: data.name ?? 'tool',
+            content: toText(data.arguments ?? '').slice(0, 120),
+          });
+        } else if (data.type === 'tool_end') {
+          const duration =
+            lastToolStartTime.current !== null
+              ? Math.max(0, (Date.now() - lastToolStartTime.current) / 1000)
+              : undefined;
+          appendMessage({
+            role: 'tool_end',
+            name: data.name ?? 'tool',
+            content: '',
+            duration,
+          });
+          setWaitingModel(true); // model is thinking about the tool result
+        } else if (data.type === 'tool_output' && data.content) {
+          appendMessage({ role: 'tool_output', content: toText(data.content).slice(0, 150) });
         } else if (data.type === 'status') {
+          setWaitingModel(false);
           source.close();
           eventSourceReference.current = null;
           void finishGeneration(task_id);
@@ -192,9 +225,35 @@ export function ChatPanel() {
         )}
         {messages.map((message) => (
           <div key={message.id} className={styles[`message_${message.role}`]}>
-            {message.role === 'tool' ? (
-              <pre className={styles.toolBlock}>{message.content}</pre>
-            ) : (
+            {message.role === 'tool_start' && (
+              <div className={styles.toolCallBlock}>
+                <span className={styles.toolCallHeader}>
+                  🔧 {message.name}
+                </span>
+                <span className={styles.toolCallArgs}>{message.content}</span>
+              </div>
+            )}
+            {message.role === 'tool_end' && (
+              <span className={styles.toolDoneLine}>
+                ✓ {message.name}
+                {message.duration !== undefined && (
+                  <span className={styles.toolDuration}>
+                    ({message.duration.toFixed(1)}s)
+                  </span>
+                )}
+              </span>
+            )}
+            {message.role === 'tool_output' && (
+              <pre className={styles.toolOutputBlock}>
+                {message.content}
+                {message.content.length >= 150 ? '…' : ''}
+              </pre>
+            )}
+            {message.role === 'user' && (
+              <span className={styles.messageUserText}>{message.content}</span>
+            )}
+            {message.role === 'agent' && <span>{message.content}</span>}
+            {message.role === 'status' && (
               <span
                 className={
                   message.kind === 'error'
@@ -214,7 +273,7 @@ export function ChatPanel() {
         {isGenerating && (
           <div className={styles.generatingIndicator}>
             <span className={styles.spinner} />
-            Generating…
+            {waitingModel ? 'Waiting for model response…' : 'Generating…'}
           </div>
         )}
         <div ref={messagesEndReference} />

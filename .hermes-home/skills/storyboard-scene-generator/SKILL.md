@@ -95,7 +95,7 @@ rot=-90° → -X      rot=180° → +Y
 
 ### 步骤 3 — 多机位设计
 
-基于已确认的场景和人物位置，根据用户描述的镜头含义设计**多个摄像机**（机位）。
+基于已确认的场景和人物位置，根据用户描述的镜头含义设计**多个摄像机**（机位）。如果用户描述明确只需单机位，则只生成一个机位。
 
 **输出: 机位计划表**
 
@@ -107,7 +107,7 @@ rot=-90° → -X      rot=180° → +Y
 
 **机位约定:**
 
-- **机位数量 ≥ 2**（多机位是本功能的核心卖点；除非描述明确单视角）
+- **机位数量 ≥ 1**（多机位是本功能的核心卖点；除非描述明确单视角）
 - 机位名用 `cam_01`、`cam_02`…（web viewer 按名字列出，名字要能看出视角含义）
 - 常见机位类型：正脸（cam_front）、背影（cam_behind）、侧面、特写、全景（手写坐标）
 - 每个机位是一个独立的 `bpy.data.objects` 摄像机对象，全部加入场景并设置命名
@@ -154,14 +154,15 @@ def cam_front(pos, rot_z, height=2.0, dist=1.5):
 
 用点积验证每个机位摄像机是否在人物预期的方向（前方/后方）。**只做这一项验证，不要做像素级画面分析**（不要采样渲染图、不要统计角色可见性、不要包围盒角点验证——这些耗时且非必要）：
 
+**坑：** 脚本内新建对象后直接读 `matrix_world` 会拿到未求值的旧值（表现为相机位置全变 0，自检误报方向反了）。自检前必须先 `bpy.context.view_layer.update()`。
+
 ```python
 for cam_name, pos, rot, expected in [
     ('cam_01', POS_A, ROT_A, 'front'),  # 预期: front或behind
     ('cam_02', POS_B, ROT_B, 'behind'),
 ]:
     cam = bpy.data.objects[cam_name]
-    dx = cam.matrix_world.translation.x - pos[0]
-    dy = cam.matrix_world.translation.y - pos[1]
+    dx = cam.matrix_world.translation.x - pos[0]    dy = cam.matrix_world.translation.y - pos[1]
     face_dir = (math.sin(rot), -math.cos(rot))
     dot = dx*face_dir[0] + dy*face_dir[1]
     actual = 'front' if dot > 0 else 'behind'

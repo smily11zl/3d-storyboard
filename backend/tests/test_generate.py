@@ -71,7 +71,9 @@ def test_generate_stream_delivers_agent_events(monkeypatch, tmp_path):
     """SSE 端点：转发 agent 的文本与工具事件。"""
     events = [
         {"type": "text", "content": "正在解析场景"},
-        {"type": "tool", "content": "运行 blender 渲染"},
+        {"type": "tool_start", "name": "terminal", "arguments": "{\"command\": \"pwd\"}"},
+        {"type": "tool_output", "content": "/Users/zengle"},
+        {"type": "tool_end", "name": "terminal", "status": "completed"},
     ]
     monkeypatch.setattr(generate, "stream_from_agent", make_agent_stream(events))
 
@@ -81,7 +83,9 @@ def test_generate_stream_delivers_agent_events(monkeypatch, tmp_path):
         chunks = [line for line in response.iter_lines() if line]
 
     assert any("正在解析场景" in chunk for chunk in chunks)
-    assert any("运行 blender 渲染" in chunk for chunk in chunks)
+    assert any("tool_start" in chunk and "terminal" in chunk for chunk in chunks)
+    assert any("tool_output" in chunk for chunk in chunks)
+    assert any("tool_end" in chunk for chunk in chunks)
 
 
 def test_generate_success_marks_done_and_exports(monkeypatch, tmp_path):
