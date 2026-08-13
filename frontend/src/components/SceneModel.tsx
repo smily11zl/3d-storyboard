@@ -2,6 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useAnimations } from '@react-three/drei';
 import { useStore } from '../store';
+import { CAMERA_FRAME_ASPECT } from './CameraFrameOverlay';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 
@@ -14,8 +15,10 @@ interface SceneModelProperties {
 export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelProperties) {
   const { actions, mixer } = useAnimations(gltfData.animations, gltfData.scene);
   const threeCamera = useThree((state) => state.camera);
+  const size = useThree((state) => state.size);
   const previousTimeReference = useRef(0);
   const animatedCameraNode = useRef<THREE.Object3D | null>(null);
+  const baseYfovReference = useRef<number | null>(null);
   // Name → node lookup for applying shared character transforms
   const nodesByNameReference = useRef<Map<string, THREE.Object3D>>(new Map());
 
@@ -138,18 +141,37 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
     }
   }, [gltfData]);
 
-  // Cache camera node + initial FOV when cameraName changes
+  // Cache camera node + base yfov when cameraName changes
   useEffect(() => {
     animatedCameraNode.current = findCameraNode();
 
     if (lockedCamera && animatedCameraNode.current) {
       const perspectiveCamera = animatedCameraNode.current as THREE.PerspectiveCamera;
       if (perspectiveCamera.fov !== undefined) {
-        (threeCamera as THREE.PerspectiveCamera).fov = perspectiveCamera.fov;
-        threeCamera.updateProjectionMatrix();
+        baseYfovReference.current = perspectiveCamera.fov;
+        applyCameraFit();
       }
     }
   }, [findCameraNode, lockedCamera, threeCamera]);
+
+  // Zoom the locked camera out (scale FOV uniformly) so the full camera frame
+  // (16:9) fits inside the canvas — keeps proportions, never distorts. When the
+  // canvas is wider than 16:9 no zoom is needed (frame already fits).
+  const applyCameraFit = () => {
+    if (lockedCamera && animatedCameraNode.current && baseYfovReference.current !== null) {
+      const perspectiveCamera = threeCamera as THREE.PerspectiveCamera;
+      const canvasAspect = size.width / size.height;
+      const fitScale = Math.max(1, CAMERA_FRAME_ASPECT / canvasAspect);
+      const targetFov = baseYfovReference.current * fitScale;
+      if (Math.abs(perspectiveCamera.fov - targetFov) > 0.01) {
+        perspectiveCamera.fov = targetFov;
+        perspectiveCamera.updateProjectionMatrix();
+      }
+    }
+  };
+
+  // Re-apply the fit on every frame (canvas resize changes the aspect ratio)
+  useFrame(applyCameraFit);
 
   return <primitive object={gltfData.scene} />;
 }

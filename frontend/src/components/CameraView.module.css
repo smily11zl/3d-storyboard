@@ -1,5 +1,5 @@
 .panel {
-  flex: 1;
+  flex: 1; /* equal split between Camera View and Free View */
   display: flex;
   flex-direction: column;
   background-color: var(--color-dark-card);
@@ -45,4 +45,26 @@
 .canvasContainer {
   flex: 1;
   min-height: 0;
+  position: relative;
+}
+
+/* Passepartout overlay: dims everything outside the camera frame */
+.frameOverlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.frameMask {
+  position: absolute;
+  /* Translucent grey: dims the out-of-frame scene so it's clearly "outside"
+     the camera frame, but still faintly visible underneath. */
+  background-color: rgba(120, 120, 120, 0.45);
+}
+
+.frameBorder {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-sizing: border-box;
 }

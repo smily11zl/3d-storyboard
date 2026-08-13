@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Environment, Lightformer } from '@react-three/drei';
 import { SceneModel } from './SceneModel';
+import { CameraFrameOverlay } from './CameraFrameOverlay';
 import { useStore } from '../store';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import styles from './CameraView.module.css';
@@ -65,6 +66,7 @@ export function CameraView({ gltfData }: CameraViewProperties) {
             />
           </Suspense>
         </Canvas>
+        <CameraFrameOverlay />
       </div>
     </div>
   );
