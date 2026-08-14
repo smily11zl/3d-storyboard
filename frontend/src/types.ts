@@ -16,6 +16,8 @@ export interface ShotMetadata {
   animations: AnimationInfo[];
   duration_seconds: number;
   frames_per_second: number;
+  /** Camera frame width/height ratio from Blender's render resolution. */
+  frame_aspect?: number;
 }
 
 export interface ShotState {

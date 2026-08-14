@@ -123,7 +123,16 @@ async def stream_from_agent(description: str, output_dir: Path):
                     )
                     raise RuntimeError(f"Agent 生成失败: {error_message}")
                 elif event_type in ("response.completed", "message.complete"):
-                    yield {"type": "done", "content": "生成完成"}
+                    usage = event.get("response", {}).get("usage") or {}
+                    yield {
+                        "type": "done",
+                        "content": "生成完成",
+                        "usage": {
+                            "input_tokens": usage.get("input_tokens", 0),
+                            "output_tokens": usage.get("output_tokens", 0),
+                            "total_tokens": usage.get("total_tokens", 0),
+                        },
+                    }
                     break
 
 
@@ -149,6 +158,9 @@ async def export_scene(blend_path: Path, output_dir: Path) -> dict:
         metadata["gltf_output_url"] = (
             f"/static/exports/{export_hash}/{main_module.GLTF_OUTPUT_NAME}"
         )
+        frame_aspect = main_module.read_frame_aspect(str(export_directory))
+        if frame_aspect:
+            metadata["frame_aspect"] = frame_aspect
         main_module.save_shot_metadata(export_hash, metadata)
         main_module.enforce_disk_quota()
         return metadata
@@ -176,13 +188,19 @@ def kill_blender_processes(output_dir: Path) -> None:
 # ── 状态读写 ───────────────────────────────────────────────────────────────
 
 def write_status(
-    output_dir: Path, status: str, error: str | None = None, shot: dict | None = None
+    output_dir: Path,
+    status: str,
+    error: str | None = None,
+    shot: dict | None = None,
+    usage: dict | None = None,
 ) -> None:
-    status_data = {"status": status}
+    status_data: dict = {"status": status}
     if error:
         status_data["error"] = error
     if shot:
         status_data["shot"] = shot
+    if usage:
+        status_data["usage"] = usage
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "status.json").write_text(
         json.dumps(status_data, ensure_ascii=False), encoding="utf-8"
@@ -208,6 +226,8 @@ async def run_generation_task(task_id: str) -> None:
                 log_parts.append(
                     f"[{event['type']}] {event.get('content', json.dumps({k: v for k, v in event.items() if k != 'type'}, ensure_ascii=False)[:200])}"
                 )
+                if event["type"] == "done" and event.get("usage"):
+                    record["usage"] = event["usage"]
                 await record["queue"].put(event)
                 if event["type"] == "done":
                     break
@@ -235,7 +255,7 @@ async def run_generation_task(task_id: str) -> None:
         if last_error:
             raise RuntimeError(f"导出失败（已重试）: {last_error}")
 
-        write_status(output_dir, "done", shot=shot_metadata)
+        write_status(output_dir, "done", shot=shot_metadata, usage=record.get("usage"))
         record["final_status"] = "done"
         log_parts.append("[done] 导出完成")
     except TimeoutError:
@@ -250,7 +270,11 @@ async def run_generation_task(task_id: str) -> None:
     finally:
         write_generation_log(output_dir, "\n".join(log_parts))
         await record["queue"].put(
-            {"type": "status", "content": record.get("final_status", "finished")}
+            {
+                "type": "status",
+                "content": record.get("final_status", "finished"),
+                "usage": record.get("usage"),
+            }
         )
         ACTIVE_TASKS.pop(task_id, None)
 

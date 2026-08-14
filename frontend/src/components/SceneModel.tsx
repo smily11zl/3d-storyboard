@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useAnimations } from '@react-three/drei';
 import { useStore } from '../store';
-import { CAMERA_FRAME_ASPECT } from './CameraFrameOverlay';
+import { DEFAULT_FRAME_ASPECT } from './CameraFrameOverlay';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 
@@ -161,7 +161,8 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
     if (lockedCamera && animatedCameraNode.current && baseYfovReference.current !== null) {
       const perspectiveCamera = threeCamera as THREE.PerspectiveCamera;
       const canvasAspect = size.width / size.height;
-      const fitScale = Math.max(1, CAMERA_FRAME_ASPECT / canvasAspect);
+      const frameAspect = useStore.getState().shot?.frame_aspect ?? DEFAULT_FRAME_ASPECT;
+      const fitScale = Math.max(1, frameAspect / canvasAspect);
       const targetFov = baseYfovReference.current * fitScale;
       if (Math.abs(perspectiveCamera.fov - targetFov) > 0.01) {
         perspectiveCamera.fov = targetFov;

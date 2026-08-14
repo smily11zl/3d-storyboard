@@ -21,6 +21,7 @@ interface GenerateStatusResponse {
     animations: { animation_name: string; animation_length_seconds: number }[];
     duration_seconds: number;
     frames_per_second: number;
+    frame_aspect?: number;
   };
 }
 
@@ -63,6 +64,7 @@ export function ChatPanel() {
         animations: shot.animations ?? [],
         duration_seconds: shot.duration_seconds,
         frames_per_second: shot.frames_per_second,
+        frame_aspect: shot.frame_aspect,
       },
       activeCameraName: shot.cameras.length > 0 ? shot.cameras[0].camera_name : null,
       durationSeconds: shot.duration_seconds,
@@ -127,7 +129,13 @@ export function ChatPanel() {
       eventSourceReference.current = source;
       setWaitingModel(true); // covers the initial model-thinking gap
       source.onmessage = (event) => {
-        let data: { type: string; content?: string; name?: string; arguments?: string };
+        let data: {
+          type: string;
+          content?: string;
+          name?: string;
+          arguments?: string;
+          usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
+        };
         try {
           data = JSON.parse(event.data);
         } catch {
@@ -165,6 +173,14 @@ export function ChatPanel() {
           appendMessage({ role: 'tool_output', content: toText(data.content).slice(0, 150) });
         } else if (data.type === 'status') {
           setWaitingModel(false);
+          if (data.usage) {
+            const usage = data.usage as { input_tokens: number; output_tokens: number; total_tokens: number };
+            appendMessage({
+              role: 'status',
+              kind: 'info',
+              content: `Tokens — input: ${usage.input_tokens.toLocaleString()}, output: ${usage.output_tokens.toLocaleString()}, total: ${usage.total_tokens.toLocaleString()}`,
+            });
+          }
           source.close();
           eventSourceReference.current = null;
           void finishGeneration(task_id);

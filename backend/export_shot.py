@@ -88,6 +88,17 @@ def export_blend_to_gltf(input_filepath, output_directory):
 
     # Print summary for caller
     scene_info = get_scene_summary(gltf_filepath)
+
+    # Camera frame aspect = render resolution ratio (Blender's actual frame
+    # shape). glTF doesn't carry it, so persist it as a sidecar for the backend.
+    resolution_x = bpy.context.scene.render.resolution_x
+    resolution_y = bpy.context.scene.render.resolution_y
+    frame_aspect = round(resolution_x / resolution_y, 4) if resolution_y else 1.0
+    scene_info["frame_aspect"] = frame_aspect
+    aspect_filepath = os.path.join(output_directory, "frame_aspect.txt")
+    with open(aspect_filepath, "w", encoding="utf-8") as aspect_file:
+        aspect_file.write(str(frame_aspect))
+
     print(json.dumps(scene_info, indent=2, ensure_ascii=False))
 
     return True

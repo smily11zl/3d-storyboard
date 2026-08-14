@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { useStore } from '../store';
 import styles from './CameraView.module.css';
 
-/** The camera frame's aspect ratio = Blender's default render ratio (16:9).
- *  The canvas renders the camera's true projection (vertical yfov synced by
- *  SceneModel, horizontal follows the canvas); the frame window shows exactly
- *  the camera's picture, everything outside is dimmed. */
-export const CAMERA_FRAME_ASPECT = 16 / 9;
+/** Default camera frame aspect when the scene doesn't specify one (Blender's
+ *  default render ratio is 16:9). */
+export const DEFAULT_FRAME_ASPECT = 16 / 9;
 
 interface FrameRect {
   x: number;
@@ -16,12 +15,13 @@ interface FrameRect {
 
 /**
  * Blender-style "active camera" passepartout overlay: a centered window shows
- * exactly what the camera sees (letterboxed to the canvas), everything outside
- * is dimmed by a translucent grey mask.
+ * exactly what the camera sees (letterboxed to the canvas, using the scene's
+ * actual frame aspect), everything outside is dimmed by a translucent grey mask.
  */
 export function CameraFrameOverlay() {
   const containerReference = useRef<HTMLDivElement | null>(null);
   const [frame, setFrame] = useState<FrameRect | null>(null);
+  const frameAspect = useStore((state) => state.shot?.frame_aspect) ?? DEFAULT_FRAME_ASPECT;
 
   useEffect(() => {
     const container = containerReference.current;
@@ -39,12 +39,12 @@ export function CameraFrameOverlay() {
       const canvasAspect = width / height;
       let frameWidth: number;
       let frameHeight: number;
-      if (canvasAspect >= CAMERA_FRAME_ASPECT) {
+      if (canvasAspect >= frameAspect) {
         frameHeight = height;
-        frameWidth = height * CAMERA_FRAME_ASPECT;
+        frameWidth = height * frameAspect;
       } else {
         frameWidth = width;
-        frameHeight = width / CAMERA_FRAME_ASPECT;
+        frameHeight = width / frameAspect;
       }
 
       setFrame({
@@ -59,7 +59,7 @@ export function CameraFrameOverlay() {
     const observer = new ResizeObserver(update);
     observer.observe(container);
     return () => observer.disconnect();
-  }, []);
+  }, [frameAspect]);
 
   if (!frame) {
     // Always render the container so the ref attaches; masks mount once the

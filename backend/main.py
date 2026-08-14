@@ -123,6 +123,19 @@ def parse_gltf_for_metadata(gltf_filepath: str) -> dict:
     }
 
 
+def read_frame_aspect(export_directory: str) -> float | None:
+    """Read the camera frame aspect written by export_shot.py (sidecar).
+    Returns None if absent (older exports)."""
+    aspect_filepath = os.path.join(export_directory, "frame_aspect.txt")
+    if not os.path.isfile(aspect_filepath):
+        return None
+    try:
+        with open(aspect_filepath) as file_handle:
+            return float(file_handle.read().strip())
+    except (ValueError, OSError):
+        return None
+
+
 async def run_export(input_filepath: str, output_directory: str) -> bool:
     """Run Blender export as an async subprocess."""
     command = [
@@ -220,6 +233,9 @@ async def upload_shot(file: UploadFile = File(...), force: bool = False):
         metadata = parse_gltf_for_metadata(gltf_filepath)
         metadata["export_hash"] = export_hash
         metadata["gltf_output_url"] = f"/static/exports/{export_hash}/{GLTF_OUTPUT_NAME}"
+        frame_aspect = read_frame_aspect(str(export_directory))
+        if frame_aspect:
+            metadata["frame_aspect"] = frame_aspect
 
         # Save metadata cache
         save_shot_metadata(export_hash, metadata)
