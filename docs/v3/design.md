@@ -15,14 +15,15 @@
   │     GET    /api/sessions            （历史列表，附加文件夹名+预览）
   │     GET    /api/sessions/{id}/messages （聊天记录，转换层还原）
   │     DELETE /api/sessions/{id}       （删除会话）
-  │     POST   /api/sessions/{id}/chat  （续接生成 = 二次修改）
-  ├─ /api/generate             —— 现有生成（改造：关联 session_id）
+  ├─ /api/generate             —— 生成入口（首轮 + 二次修改共用，带 session_id/folder_name）
   ├─ /api/generate/{id}/status —— 现有
-  └─ /api/open-finder/{folder} —— macOS open 命令
+  └─ /api/open-finder          —— macOS open 命令
 
 Hermes API Server (8643, 内嵌)
-  └─ /api/sessions 系列 + /v1/responses（底层）
+  └─ /api/sessions 系列 + /api/sessions/{id}/chat/stream（底层生成/续接）
 ```
+
+> 注：二次修改不设独立端点，复用 `POST /api/generate`，payload 携带 `session_id`（续接会话）+ `folder_name`（定位输出文件夹）。
 
 ## 2. 数据流
 
@@ -32,10 +33,10 @@ Hermes API Server (8643, 内嵌)
 前端 [+ 新的聊天] → 空会话（内存态，不落盘）
 前端提交描述 → POST /api/generate {description}
   后端创建任务（时间戳文件夹 + status.json）
-  后端向 Hermes 发起生成（沿用 /v1/responses 或改造为 session 续接）
-  Hermes 自动建 session（state.db）
-  后端把 session_id 写进 status.json（映射）
-  生成完成 → 前端加载场景 + 聊天记录（内存）
+  后端 POST /api/sessions 建会话（拿可控 session_id；返回 201 Created）
+  后端发 session_created 事件 → 写 session_id 到 status.json + 通知前端（下拉框即时变为文件夹名）
+  后端续接 POST /api/sessions/{id}/chat/stream（SSE 流式生成）
+  生成完成（run.completed 带 usage）→ 前端加载场景 + token 统计
 ```
 
 ### 2.2 历史列表加载
@@ -61,8 +62,9 @@ Hermes API Server (8643, 内嵌)
 ### 2.4 二次修改
 
 ```
-前端在历史会话发消息 → POST /api/sessions/{id}/chat {message}
-  后端转发到 Hermes session 续接（SSE 流式）
+前端在历史会话发消息 → POST /api/generate {description, session_id, folder_name}
+  后端用 session_id 续接 Hermes session（/chat/stream，不新建会话）
+  后端用 folder_name 定位输出文件夹（覆盖同文件夹，不新建）
   agent 读回 script.py → 修改 → 重新运行 → 覆盖 scene.blend
   后端重新导出 glTF（hash 变化 → 新 exports/ 目录）
   前端追加消息 + 刷新场景
@@ -87,8 +89,9 @@ Hermes API Server (8643, 内嵌)
 ## 3. session_id ↔ 文件夹名映射
 
 - **权威来源**: 每个任务的 `generate/output/<时间戳>/status.json` 增加 `session_id` 字段
-- 生成链路改造: 后端拿到 Hermes session_id 后写回 status.json
-- **兜底**: session.started_at（epoch 秒）转 `YYYYMMDD_HHMMSS` 与文件夹名精确匹配
+- 生成链路改造: 后端 `session_created` 事件拿到 Hermes session_id 后写回 status.json
+- **二次修改定位**: 前端直接传 `folder_name`（不依赖 session_id 反查），兼容旧会话（status.json 无 session_id 的历史数据）
+- **兜底**: `find_folder_near_timestamp` 用 session.started_at（epoch 秒）转 `YYYYMMDD_HHMMSS`，±3 秒容差匹配旧文件夹
 - 历史列表组装时: 先查 status.json 映射，缺失则用时间戳兜底
 
 ## 4. 后端转发层设计
@@ -108,13 +111,11 @@ async def get_session_messages(session_id: str):
 
 @router.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str):
-    # 转发 DELETE（幂等）
+    # 转发 DELETE（幂等，404 视为成功）
     ...
 
-@router.post("/api/sessions/{session_id}/chat")
-async def continue_session(session_id: str, payload):
-    # 续接生成（SSE 流式，复用现有 generate 的流式逻辑）
-    ...
+# 注：二次修改不设独立端点，复用 /api/generate（backend/generate.py）
+#     GeneratePayload 含 session_id（续接）+ folder_name（定位输出文件夹）
 ```
 
 - 鉴权: 复用 Hermes 的 API_SERVER_KEY（内部转发加 Bearer header）
@@ -131,6 +132,10 @@ def convert_hermes_messages(hermes_messages: list[dict]) -> list[dict]:
         if role == "user":
             result.append({"role": "user", "content": msg["content"]})
         elif role == "assistant":
+            # reasoning（模型推理/思考）→ 折叠的 Thinking 块（在 agent 文本之前）
+            reasoning = msg.get("reasoning") or msg.get("reasoning_content")
+            if reasoning:
+                result.append({"role": "reasoning", "content": reasoning})
             content = msg.get("content") or ""
             if content:
                 result.append({"role": "agent", "content": content})
@@ -177,3 +182,33 @@ frontend/src/components/ChatPanel.tsx（改：session 状态 + 二次修改）
 frontend/src/store.ts        （改：currentSessionId/sessionList）
 .hermes-home/skills/storyboard-scene-generator/SKILL.md（改：修改模式）
 ```
+
+## 9. Thinking 折叠块（模型推理展示）
+
+- **数据来源**: Hermes messages 表的 `reasoning` / `reasoning_content` 字段（deepseek 按需产生推理，非每次调用都有）
+- **转换层**: assistant 消息的 reasoning 字段 → 独立的 `reasoning` 消息（在 agent 文本之前）
+- **前端**: `ReasoningBlock` 组件渲染为可折叠块（`▸ Thinking` / `▾ Thinking`），点击展开/收起
+- **能力边界（实测确认）**: 真正的 reasoning 字段**不流式推送**（仅消息完成后存 messages 表）；`tool.progress` 事件携带的是 content 而非 reasoning，故实时流式思考不可得，仅历史回放可见
+
+## 10. 流式文本合并
+
+- Hermes `/chat/stream` 的 `assistant.delta` 事件以极细粒度（甚至半个词）推送文本
+- 前端按「连续 text delta 合并为一条 agent 消息」处理：最后一条是 agent 则追加内容，否则新建
+- 修复了「每段文字一行」的严重换行问题
+
+## 11. session_created 即时更新
+
+- 会话在生成**开始**（POST /api/sessions）时即创建，后端发 `session_created` 事件
+- 前端收到后立即 `setCurrentSessionId` + 刷新列表 → 下拉框从 "New chat" 变为文件夹名，无需等生成完成
+
+## 12. 键盘焦点守卫
+
+- `BrowseControls`（WASD/QE 视角）、`FreeView`（Tab 切模式）、`SelectionControls`（W/E/Esc）均用 `window.addEventListener('keydown')` 全局监听
+- 统一守卫：`event.target` 为 `INPUT` / `TEXTAREA` / `contentEditable` 时直接忽略
+- 修复「聊天框打字影响自由视角移动」；`BrowseControls` 的 keyup 无条件清除，避免按键残留卡视角
+
+## 13. 关键坑位记录
+
+- **POST /api/sessions 返回 201 Created**（非 200），判断须 `in (200, 201)`
+- **session_id 两类格式**: 手动 POST /api/sessions 返回 `api_时间戳_随机`；Hermes 自动建会话为 UUID
+- **folder_name 兜底**: 二次修改定位输出文件夹优先用前端传的 `folder_name`（兼容无 session_id 的旧数据），不依赖 session_id 反查

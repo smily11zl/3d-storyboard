@@ -29,3 +29,13 @@
 - [x] T4-1 skill 增加"修改模式"约束
 - [x] T4-2 文档更新（ROADMAP / 主 PRD / CONTEXT）
 - [x] T4-3 全量测试 + 手动集成验证
+
+## 阶段 5 — 交付后修复与增强（用户验收 Q&A）
+
+- [x] T5-1 修复「创建会话失败 201」：POST /api/sessions 返回 201 Created 而非 200，判断改为 `in (200, 201)`
+- [x] T5-2 二次修改 folder_name 兜底：前端直接传 folder_name 定位输出文件夹（旧会话 status.json 无 session_id 时也可二次修改）
+- [x] T5-3 流式文本合并：连续 text delta 合并为一条 agent 消息（修复"每段文字一行"的严重换行）
+- [x] T5-4 session_created 即时更新下拉框：生成开始（会话创建瞬间）下拉框即从 "New chat" 变为文件夹名，无需等生成完成
+- [x] T5-5 thinking 折叠块：历史 reasoning 字段 → Thinking 折叠块（转换层 + ReasoningBlock 组件，生成中展开/完成后折叠）
+- [x] T5-6 键盘焦点守卫：BrowseControls/FreeView/SelectionControls 忽略输入框内按键（打字不再影响自由视角移动）
+- [x] T5-7 确认 Hermes 推理流式能力边界：真正的 reasoning 字段不流式推送（仅存 messages 表），`tool.progress` 事件携带的是 content 而非 reasoning（已撤销误加的转发）

@@ -51,7 +51,8 @@ V3 引入多会话历史：每个生成任务成为一个可持久化的会话�
 ### F4 二次修改（增量修改）
 
 - 在历史会话里继续发消息（如"把人物换成女人""机位改成侧面"）
-- 后端用 Hermes session 续接: `POST /api/sessions/{id}/chat`（保留上下文）
+- 前端提交 `POST /api/generate {description, session_id, folder_name}`（复用生成入口）
+- 后端用 `session_id` 续接 Hermes 会话（`/chat/stream`，保留上下文），用 `folder_name` 定位输出文件夹
 - agent 行为: **读回之前的 `script.py` → 修改代码 → 重新运行生成 scene.blend 覆盖**
   - 不新建代码文件（skill 需支持"修改模式"）
 - 覆盖同一文件夹（文件夹名不变）；exports/ 因 hash 变化自动生成新缓存目录
@@ -74,7 +75,15 @@ V3 引入多会话历史：每个生成任务成为一个可持久化的会话�
 
 - 生成任务创建时，将 Hermes session_id 写入该任务 `status.json` 的 `session_id` 字段
 - 历史列表通过 status.json 反查文件夹名（session.started_at 时间戳作为兜底匹配）
+- 二次修改定位输出文件夹：前端直接传 `folder_name`（兼容无 session_id 的旧数据）
 - 映射不另建存储，复用 status.json
+
+### F8 思考过程展示（Thinking 折叠块）
+
+- 历史会话中，模型的推理/思考内容（Hermes messages 表的 `reasoning` 字段）以可折叠块展示
+- 折叠块样式：一行 `▸ Thinking`，点击展开/收起推理全文
+- 推理内容由 deepseek 按需产生（规划/设计步骤有，纯工具调用步骤无），故非每条消息都有
+- 能力边界：真正的 reasoning 不流式推送（仅存 messages 表），故思考过程仅在历史回放可见，生成过程中不实时显示
 
 ## 4. 非功能需求
 
@@ -108,18 +117,20 @@ Hermes 消息（底层 LLM 格式）→ 前端 UI 格式：
 | Hermes 存 | 前端显示 | 转换 |
 |-----------|---------|------|
 | user (content) | user | 直接 |
+| assistant (reasoning 非空) | ▸ Thinking 折叠块 | 直接（在 agent 文本前） |
 | assistant (content 非空) | agent 文本 | 直接 |
 | assistant (tool_calls) | 🔧 tool_start | 拆 tool_calls JSON 数组 |
 | tool (content + tool_name) | 📄 tool_output | 直接（截断） |
 | （无） | ✓ tool_end 耗时 | 历史回放省略耗时 |
 | （无） | status 成功/失败/token | 根据 session 元数据重新生成 |
 
-### 6.3 现有 /v1/responses 与 session 的关系
+### 6.3 生成链路（统一走 /chat/stream）
 
-- 现有生成走 `POST /v1/responses`（无 session_id），Hermes 自动建 source=api_server 的 session
-- V3 改造: 生成改为可指定 session_id（续接）——新建会话 POST /api/sessions 拿 session_id，
-  或沿用 /v1/responses 的自动建 session + 从响应/状态回查 session_id
-- 二次修改 = 续接已有 session
+- 生成统一走 Hermes `/api/sessions/{id}/chat/stream`（SSE 流式）
+- 首轮：先 `POST /api/sessions` 建会话拿可控 session_id（返回 201 Created），再 `/chat/stream` 续接
+- 二次修改：直接续接已有 session_id，不新建会话
+- `/v1/responses` 响应不返回 session_id，已弃用为生成入口
+- Hermes SSE 事件：`assistant.delta`（文本）/ `tool.started` / `tool.completed`（带 preview）/ `tool.failed` / `run.completed`（带 usage）/ `error` / `done`；`instructions` 字段传 system prompt（ephemeral）
 
 ## 7. 范围外（后续迭代）
 

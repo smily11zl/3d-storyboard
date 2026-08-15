@@ -31,13 +31,16 @@ A web application for viewing Blender 3D storyboard shots directly in the browse
 Prerequisites: Blender 4.4.3 in PATH, Python 3.11, Node.js.
 
 ```bash
-# Install dependencies (hermes-agent included)
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # or install backend deps + hermes-agent
+# One command — installs ALL dependencies (backend venv + pip packages + frontend npm)
+./install.sh
 
-# One command — starts backend (8000) + agent API server (8643) + frontend (5173)
+# Then start everything (backend 8000 + agent API server 8643 + frontend 5173)
 ./start.sh
 ```
+
+`install.sh` checks for Python 3.11 / Node.js / Blender, creates the `.venv`, installs
+`requirements.txt` (including `hermes-agent`) and runs `npm install` for the frontend.
+It is idempotent — re-run it to fill in anything missing. (Manual equivalent: `python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt && cd frontend && npm install`)
 
 Then open http://localhost:5173:
 

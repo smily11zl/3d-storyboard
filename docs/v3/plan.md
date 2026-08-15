@@ -3,9 +3,11 @@
 状态: 已完成 ✅
 日期: 2026-08-14
 
-> 四个阶段全部完成。阶段 2 的关键决策（session_id 获取方式）实测后改为：
+> 五个阶段全部完成。阶段 2 的关键决策（session_id 获取方式）实测后改为：
 > **统一走 `/api/sessions/{id}/chat/stream`**（先建会话拿可控 session_id，再续接生成），
 > 而非 `/v1/responses`（其响应不返回 session_id）。
+> 阶段 5 为交付后用户验收发现的修复与增强（201 修复 / folder_name 兜底 / 流式文本合并 /
+> thinking 折叠块 / 键盘焦点守卫等）。
 
 ## 阶段划分
 
@@ -35,6 +37,15 @@
 1. skill 增加"修改模式"约束（读回 script.py 修改）
 2. 文档更新（ROADMAP / 主 PRD / CONTEXT）
 3. 全量测试 + 手动集成验证（真实生成 → 历史 → 二次修改 → 删除）
+
+### 阶段 5 — 交付后修复与增强
+1. 修复「创建会话失败 201」：POST /api/sessions 返回 201，判断放宽为 `in (200, 201)`
+2. 二次修改 folder_name 兜底：前端传 folder_name 定位输出文件夹（兼容旧数据）
+3. 流式文本合并：连续 text delta 合并为一条 agent 消息（修复换行）
+4. session_created 即时更新：生成开始即更新下拉框
+5. thinking 折叠块：历史 reasoning 字段还原为 Thinking 折叠块
+6. 键盘焦点守卫：输入框内按键不影响视角/模式切换
+7. 确认 Hermes 推理流式能力边界（reasoning 不流式，tool.progress 是 content 非推理）
 
 ## 关键风险
 

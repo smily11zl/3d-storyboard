@@ -27,9 +27,11 @@
 - 复用 Hermes `/api/sessions` 存储（历史列表 / 消息 / 删除 / 续接）
 - 历史下拉框（标题旁）+ 顶部"新的聊天" + 删除 + 打开 Finder
 - 二次修改（增量：改 script.py 重新生成，覆盖同文件夹）
-- 会话 ↔ 文件夹名映射（status.json session_id + 时间戳容差兜底）
+- 会话 ↔ 文件夹名映射（status.json session_id + 时间戳容差兜底 + folder_name 直传）
+- 思考过程展示（Thinking 折叠块，历史 reasoning 字段还原）
+- 交付后修复：201 会话创建 / 流式文本合并 / 下拉框即时更新 / 键盘焦点守卫
 - 文档: docs/v3/（prd / design / plan / tasks）
-- 切片进度: 阶段 1-4（见 docs/v3/tasks.md）
+- 切片进度: 阶段 1-5（见 docs/v3/tasks.md）
 
 ## 后续候选（未排期）
 
