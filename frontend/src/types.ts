@@ -28,3 +28,15 @@ export interface ShotState {
   isPlaying: boolean;
   currentTime: number;
 }
+
+export interface SessionSummary {
+  id: string;
+  folder_name: string;
+  preview: string;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: number | null;
+  message_count: number;
+  has_output: boolean;
+  started_at: number;
+}

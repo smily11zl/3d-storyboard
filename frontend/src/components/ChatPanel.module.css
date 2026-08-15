@@ -14,6 +14,7 @@
 .chatHeader {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid #2e2e2e;
@@ -253,3 +254,37 @@
 .stopButton:hover {
   opacity: 0.85;
 }
+
+.reasoningBlock {
+  margin: 2px 0;
+}
+
+.reasoningSummary {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reasoningSummary:hover {
+  color: var(--color-text-secondary);
+}
+
+.reasoningContent {
+  margin-top: 4px;
+  padding: 8px 10px;
+  background-color: #1a1a1a;
+  border-left: 2px solid #3d3d3d;
+  border-radius: 4px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+

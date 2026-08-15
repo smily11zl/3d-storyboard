@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ShotMetadata } from './types';
+import type { SessionSummary, ShotMetadata } from './types';
 
 interface StoreState {
   shot: ShotMetadata | null;
@@ -12,10 +12,15 @@ interface StoreState {
   framesPerSecond: number;
   animationStartTime: number;
 
-  /** V2 layout state — which sidebar entry is active and whether the sidebar is collapsed */
-  sidebarMode: 'upload' | 'generate';
+  /** V3 session state — which historical chat session is active. */
+  currentSessionId: string | null;
+  sessionList: SessionSummary[];
+  newChatToken: number;
+  setCurrentSessionId: (id: string | null) => void;
+  setSessionList: (list: SessionSummary[]) => void;
+  requestNewChat: () => void;
+
   sidebarCollapsed: boolean;
-  setSidebarMode: (mode: 'upload' | 'generate') => void;
   toggleSidebar: () => void;
 
   /** Character (armature root) transforms set by the Free View gizmo.
@@ -49,6 +54,9 @@ export const useStore = create<StoreState>((set) => ({
   durationSeconds: 0,
   framesPerSecond: 24,
   animationStartTime: 0,
+  currentSessionId: null,
+  sessionList: [],
+  newChatToken: 0,
   sidebarCollapsed: false,
   characterTransforms: {},
 
@@ -89,6 +97,10 @@ export const useStore = create<StoreState>((set) => ({
   },
 
   clearError: () => set({ errorMessage: null }),
+  setCurrentSessionId: (id) => set({ currentSessionId: id }),
+  setSessionList: (list) => set({ sessionList: list }),
+  requestNewChat: () =>
+    set((state) => ({ newChatToken: state.newChatToken + 1, currentSessionId: null })),
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   setActiveCamera: (cameraName) => set({ activeCameraName: cameraName }),
   setPlaying: (playing) =>

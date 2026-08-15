@@ -78,6 +78,16 @@ export function SelectionControls({
   useEffect(() => {
     if (!enabled) return;
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Ignore keys typed into inputs/textarea so typing never triggers shortcuts
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
       if (event.key === 'w' || event.key === 'W') onTransformModeChange('translate');
       if (event.key === 'e' || event.key === 'E') onTransformModeChange('rotate');
       if (event.key === 'Escape') onSelect(null);

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import type { SessionSummary } from '../types';
+import { HistoryDropdown } from './HistoryDropdown';
 import styles from './ChatPanel.module.css';
 
 interface ChatMessage {
   id: number;
-  role: 'user' | 'agent' | 'tool_start' | 'tool_end' | 'tool_output' | 'status';
+  role: 'user' | 'agent' | 'tool_start' | 'tool_end' | 'tool_output' | 'status' | 'reasoning';
   content: string;
   name?: string;
   duration?: number;
@@ -14,6 +16,7 @@ interface ChatMessage {
 interface GenerateStatusResponse {
   status: string;
   error?: string;
+  session_id?: string;
   shot?: {
     export_hash: string;
     gltf_output_url: string;
@@ -23,6 +26,22 @@ interface GenerateStatusResponse {
     frames_per_second: number;
     frame_aspect?: number;
   };
+}
+
+/** Collapsible reasoning block: streams open during generation, collapses after. */
+function ReasoningBlock({ content, autoExpand }: { content: string; autoExpand: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    setExpanded(autoExpand);
+  }, [autoExpand]);
+  return (
+    <div className={styles.reasoningBlock}>
+      <button className={styles.reasoningSummary} onClick={() => setExpanded((value) => !value)}>
+        {expanded ? '▾' : '▸'} Thinking
+      </button>
+      {expanded && <div className={styles.reasoningContent}>{content}</div>}
+    </div>
+  );
 }
 
 /** AI generation chat panel: describe a scene → live SSE log → auto-load the result. */
@@ -39,6 +58,8 @@ export function ChatPanel() {
   const lastPromptReference = useRef<string | null>(null);
   const isGeneratingReference = useRef(false);
   const lastToolStartTime = useRef<number | null>(null);
+  const currentSessionId = useStore((state) => state.currentSessionId);
+  const newChatToken = useStore((state) => state.newChatToken);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -50,8 +71,95 @@ export function ChatPanel() {
     return () => eventSourceReference.current?.close();
   }, []);
 
+  // Load history list on mount
+  useEffect(() => {
+    void refreshSessionList();
+  }, []);
+
+  // "New chat" requested (TopBar button): clear the local conversation
+  useEffect(() => {
+    setMessages([]);
+    setDescription('');
+    setRetryDescription(null);
+    lastPromptReference.current = null;
+    setActiveTaskId(null);
+  }, [newChatToken]);
+
   const appendMessage = (message: Omit<ChatMessage, 'id'>) => {
     setMessages((current) => [...current, { ...message, id: nextMessageId.current++ }]);
+  };
+
+  const refreshSessionList = async () => {
+    try {
+      const response = await fetch('/api/sessions');
+      if (response.ok) {
+        const body = await response.json();
+        useStore.getState().setSessionList(body.data ?? []);
+      }
+    } catch {
+      // best-effort: history list is non-critical
+    }
+  };
+
+  const loadHistory = async (session: SessionSummary) => {
+    useStore.getState().setCurrentSessionId(session.id);
+    // Load chat messages (converted by the backend)
+    try {
+      const response = await fetch(`/api/sessions/${session.id}/messages`);
+      if (response.ok) {
+        const body = await response.json();
+        const converted = body.data ?? [];
+        nextMessageId.current = 1;
+        setMessages(
+          converted.map((message: Omit<ChatMessage, 'id'>, index: number) => ({
+            ...message,
+            id: index + 1,
+          })),
+        );
+      }
+    } catch {
+      // best-effort
+    }
+    // Restore the scene if this session produced an output
+    if (session.has_output) {
+      try {
+        const statusResponse = await fetch(`/api/generate/${session.folder_name}`);
+        if (statusResponse.ok) {
+          const status = (await statusResponse.json()) as GenerateStatusResponse;
+          if (status.status === 'done' && status.shot) {
+            loadShotIntoViewer(status.shot);
+          }
+        }
+      } catch {
+        // best-effort
+      }
+    }
+  };
+
+  const handleDeleteSession = async (session: SessionSummary) => {
+    try {
+      await fetch(`/api/sessions/${session.id}`, { method: 'DELETE' });
+    } catch {
+      // best-effort
+    }
+    if (session.id === useStore.getState().currentSessionId) {
+      useStore.getState().setCurrentSessionId(null);
+      setMessages([]);
+      setRetryDescription(null);
+    }
+    void refreshSessionList();
+  };
+
+  const handleOpenFinder = async (session: SessionSummary) => {
+    try {
+      await fetch('/api/open-finder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_name: session.folder_name }),
+      });
+    } catch {
+      // best-effort
+    }
   };
 
   const loadShotIntoViewer = (shot: GenerateStatusResponse['shot']) => {
@@ -86,6 +194,11 @@ export function ChatPanel() {
     if (data.status === 'done' && data.shot) {
       loadShotIntoViewer(data.shot);
       appendMessage({ role: 'status', kind: 'success', content: '✅ Generation complete, scene loaded' });
+      // First-round generation creates a session — link it and refresh history
+      if (data.session_id) {
+        useStore.getState().setCurrentSessionId(data.session_id);
+        void refreshSessionList();
+      }
     } else if (data.status === 'cancelled') {
       appendMessage({ role: 'status', kind: 'info', content: 'Generation cancelled' });
     } else {
@@ -113,10 +226,17 @@ export function ChatPanel() {
     setIsGenerating(true);
 
     try {
+      const currentSession = useStore
+        .getState()
+        .sessionList.find((session) => session.id === currentSessionId);
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ description: prompt }),
+        body: JSON.stringify({
+          description: prompt,
+          session_id: currentSessionId ?? undefined,
+          folder_name: currentSession?.folder_name ?? undefined,
+        }),
       });
       if (!response.ok) {
         const errorData = await response.json();
@@ -134,6 +254,7 @@ export function ChatPanel() {
           content?: string;
           name?: string;
           arguments?: string;
+          session_id?: string;
           usage?: { input_tokens: number; output_tokens: number; total_tokens: number };
         };
         try {
@@ -145,11 +266,29 @@ export function ChatPanel() {
         // Defensive: some payloads carry objects instead of strings
         const toText = (value: unknown): string =>
           typeof value === 'string' ? value : JSON.stringify(value);
-        if (data.type === 'text' && data.content) {
-          appendMessage({ role: 'agent', content: toText(data.content) });
-          // After agent text, the next thing is usually a tool call or done —
-          // show the waiting hint again until the next event arrives.
-          setWaitingModel(true);
+        if (data.type === 'session_created' && data.session_id) {
+          // Session is created at generation START — link it immediately so the
+          // dropdown switches from "New chat" to the folder name right away.
+          useStore.getState().setCurrentSessionId(data.session_id);
+          void refreshSessionList();
+        } else if (data.type === 'text' && data.content) {
+          // Merge consecutive text deltas into ONE agent message instead of
+          // appending a new message per delta (which caused severe line breaks).
+          const delta = toText(data.content);
+          setMessages((current) => {
+            const last = current[current.length - 1];
+            if (last && last.role === 'agent') {
+              return [
+                ...current.slice(0, -1),
+                { ...last, content: last.content + delta },
+              ];
+            }
+            return [
+              ...current,
+              { role: 'agent', content: delta, id: nextMessageId.current++ },
+            ];
+          });
+          setWaitingModel(false); // text is flowing — not waiting
         } else if (data.type === 'tool_start') {
           lastToolStartTime.current = Date.now();
           appendMessage({
@@ -157,6 +296,7 @@ export function ChatPanel() {
             name: data.name ?? 'tool',
             content: toText(data.arguments ?? '').slice(0, 120),
           });
+          setWaitingModel(false); // tool is executing
         } else if (data.type === 'tool_end') {
           const duration =
             lastToolStartTime.current !== null
@@ -171,6 +311,7 @@ export function ChatPanel() {
           setWaitingModel(true); // model is thinking about the tool result
         } else if (data.type === 'tool_output' && data.content) {
           appendMessage({ role: 'tool_output', content: toText(data.content).slice(0, 150) });
+          setWaitingModel(false); // tool result is here
         } else if (data.type === 'status') {
           setWaitingModel(false);
           if (data.usage) {
@@ -228,6 +369,12 @@ export function ChatPanel() {
     <div className={styles.chatPanel}>
       <div className={styles.chatHeader}>
         <span className={styles.chatTitle}>AI Generate</span>
+        <HistoryDropdown
+          onSelect={(session) => void loadHistory(session)}
+          onDelete={(session) => void handleDeleteSession(session)}
+          onOpenFinder={(session) => void handleOpenFinder(session)}
+          onNewChat={() => useStore.getState().requestNewChat()}
+        />
       </div>
 
       <div className={styles.messageList}>
@@ -239,8 +386,14 @@ export function ChatPanel() {
             back shot”
           </div>
         )}
-        {messages.map((message) => (
+        {messages.map((message, index) => (
           <div key={message.id} className={styles[`message_${message.role}`]}>
+            {message.role === 'reasoning' && (
+              <ReasoningBlock
+                content={message.content}
+                autoExpand={isGenerating && index === messages.length - 1}
+              />
+            )}
             {message.role === 'tool_start' && (
               <div className={styles.toolCallBlock}>
                 <span className={styles.toolCallHeader}>

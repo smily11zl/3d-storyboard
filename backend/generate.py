@@ -27,8 +27,19 @@ def get_output_root() -> Path:
 GENERATION_INSTRUCTION_PREFIX = (
     "请使用 storyboard-scene-generator skill 生成 3D 场景。"
     "输出目录已指定，请将最终 .blend 保存为: {output_dir}/scene.blend。"
-    "所有中间文件放在该目录内。用户需求: {description}"
+    "所有中间文件放在该目录内。"
 )
+
+EDIT_INSTRUCTION_PREFIX = (
+    "这是对已有场景的二次修改。请读回 {output_dir}/script.py，"
+    "按用户要求修改代码，重新运行生成 scene.blend 覆盖。不要新建代码文件。"
+)
+
+
+def build_instruction(output_dir: Path, is_edit: bool) -> str:
+    """生成指令（system prompt）：首轮生成 / 二次修改两种模式。"""
+    template = EDIT_INSTRUCTION_PREFIX if is_edit else GENERATION_INSTRUCTION_PREFIX
+    return template.format(output_dir=output_dir)
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
 
@@ -38,102 +49,105 @@ ACTIVE_TASKS: dict[str, dict] = {}
 
 class GeneratePayload(BaseModel):
     description: str
+    session_id: str | None = None  # 二次修改时传入，续接已有会话
+    folder_name: str | None = None  # 二次修改时传入，定位输出文件夹（旧会话无 session_id 映射时兜底）
 
 
 # ── 可替换依赖（测试 mock 点）──────────────────────────────────────────────
 
-async def stream_from_agent(description: str, output_dir: Path):
+async def stream_from_agent(description: str, output_dir: Path, session_id: str | None = None):
     """向 Hermes API Server 提交生成，产出事件流。
 
-    yield: {"type": "text"|"tool"|"done", "content": str}
-    真实实现：POST /v1/responses (SSE)，解析 message.delta / tool.* 事件。
+    首轮（session_id=None）：先 POST /api/sessions 建会话拿 session_id，
+    再走 /api/sessions/{id}/chat/stream 续接生成。
+    二次修改（session_id 有值）：直接续接已有会话。
+
+    yield: session_created / text / tool_start / tool_end / tool_output / done
+    真实实现走 Hermes 的 session chat 流式端点（SSE: event: + data: 格式）。
     """
     import httpx
 
-    model = settings_module.read_current_settings()["model"]
-    instruction = GENERATION_INSTRUCTION_PREFIX.format(
-        output_dir=output_dir, description=description
-    )
     api_key = agent_service.get_api_server_key()
-    payload = {
-        "model": model,
-        "input": [
-            {"role": "system", "content": instruction},
-            {"role": "user", "content": description},
-        ],
-        "stream": True,
-    }
+    headers = {"Authorization": f"Bearer {api_key}"}
+    is_edit = session_id is not None
+    instruction = build_instruction(output_dir, is_edit)
 
     async with httpx.AsyncClient(timeout=None) as http_client:
+        # 首轮：建会话拿 session_id（可控，用于写 status.json 映射）
+        if session_id is None:
+            create_response = await http_client.post(
+                f"{agent_service.AGENT_BASE_URL}/api/sessions",
+                json={},
+                headers=headers,
+            )
+            if create_response.status_code not in (200, 201):
+                raise RuntimeError(f"创建会话失败 {create_response.status_code}")
+            session_id = create_response.json()["session"]["id"]
+            yield {"type": "session_created", "session_id": session_id}
+
         async with http_client.stream(
             "POST",
-            f"{agent_service.AGENT_BASE_URL}/v1/responses",
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
+            f"{agent_service.AGENT_BASE_URL}/api/sessions/{session_id}/chat/stream",
+            json={"message": description, "instructions": instruction},
+            headers=headers,
         ) as response:
             if response.status_code != 200:
-                raise RuntimeError(f"Agent 返回错误 {response.status_code}")
+                raise RuntimeError(f"续接生成失败 {response.status_code}")
+
+            event_name = None
             async for line in response.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data.strip() == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                event_type = event.get("type", "")
-                if event_type == "response.output_text.delta":
-                    yield {"type": "text", "content": event.get("delta", "")}
-                elif event_type == "response.output_item.added":
-                    item = event.get("item", {})
-                    if item.get("type") == "function_call":
-                        arguments = item.get("arguments", "")
+                if line.startswith("event: "):
+                    event_name = line[7:].strip()
+                elif line.startswith("data: "):
+                    try:
+                        event = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    if event_name == "assistant.delta":
+                        delta = event.get("delta", "")
+                        if delta:
+                            yield {"type": "text", "content": delta}
+                    elif event_name == "tool.started":
+                        arguments = event.get("args") or {}
                         if not isinstance(arguments, str):
                             arguments = json.dumps(arguments, ensure_ascii=False)
                         yield {
                             "type": "tool_start",
-                            "name": item.get("name", "tool"),
+                            "name": event.get("tool_name", "tool"),
                             "arguments": arguments,
                         }
-                elif event_type == "response.output_item.done":
-                    item = event.get("item", {})
-                    if item.get("type") == "function_call":
+                    elif event_name == "tool.completed":
                         yield {
                             "type": "tool_end",
-                            "name": item.get("name", "tool"),
-                            "status": item.get("status", "completed"),
+                            "name": event.get("tool_name", "tool"),
+                            "status": "completed",
                         }
-                    elif item.get("type") == "function_call_output":
-                        output = item.get("output", "")
-                        # Hermes 有时返回 {"type": "text", "text": "..."} 结构
-                        if not isinstance(output, str):
-                            output = json.dumps(output, ensure_ascii=False)
-                        yield {"type": "tool_output", "content": output[:500]}
-                elif event_type == "error" or event.get("finish_reason") == "error":
-                    error_message = event.get("error", {}).get("message", "未知错误")
-                    raise RuntimeError(f"Agent 生成失败: {error_message}")
-                elif event_type == "response.failed":
-                    error_message = (
-                        event.get("response", {}).get("error", {}).get("message")
-                        or event.get("error", {}).get("message")
-                        or event.get("error", {}).get("code")
-                        or "Agent 生成失败（未知原因）"
-                    )
-                    raise RuntimeError(f"Agent 生成失败: {error_message}")
-                elif event_type in ("response.completed", "message.complete"):
-                    usage = event.get("response", {}).get("usage") or {}
-                    yield {
-                        "type": "done",
-                        "content": "生成完成",
-                        "usage": {
-                            "input_tokens": usage.get("input_tokens", 0),
-                            "output_tokens": usage.get("output_tokens", 0),
-                            "total_tokens": usage.get("total_tokens", 0),
-                        },
-                    }
-                    break
+                        preview = event.get("preview")
+                        if preview:
+                            if not isinstance(preview, str):
+                                preview = json.dumps(preview, ensure_ascii=False)
+                            yield {"type": "tool_output", "content": preview[:500]}
+                    elif event_name == "tool.failed":
+                        yield {
+                            "type": "tool_end",
+                            "name": event.get("tool_name", "tool"),
+                            "status": "failed",
+                        }
+                    elif event_name == "run.completed":
+                        usage = event.get("usage") or {}
+                        yield {
+                            "type": "done",
+                            "content": "生成完成",
+                            "usage": {
+                                "input_tokens": usage.get("input_tokens", 0),
+                                "output_tokens": usage.get("output_tokens", 0),
+                                "total_tokens": usage.get("total_tokens", 0),
+                            },
+                        }
+                    elif event_name == "error":
+                        raise RuntimeError(f"Agent 生成失败: {event.get('message', '未知')}")
+                    elif event_name == "done":
+                        break
 
 
 async def export_scene(blend_path: Path, output_dir: Path) -> dict:
@@ -193,6 +207,7 @@ def write_status(
     error: str | None = None,
     shot: dict | None = None,
     usage: dict | None = None,
+    session_id: str | None = None,
 ) -> None:
     status_data: dict = {"status": status}
     if error:
@@ -201,6 +216,8 @@ def write_status(
         status_data["shot"] = shot
     if usage:
         status_data["usage"] = usage
+    if session_id:
+        status_data["session_id"] = session_id
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "status.json").write_text(
         json.dumps(status_data, ensure_ascii=False), encoding="utf-8"
@@ -220,9 +237,15 @@ async def run_generation_task(task_id: str) -> None:
     log_parts = []
     try:
         async with asyncio.timeout(GENERATION_TIMEOUT_SECONDS):
-            async for event in stream_from_agent(record["description"], output_dir):
+            async for event in stream_from_agent(
+                record["description"], output_dir, record.get("session_id")
+            ):
                 if record["cancel_event"].is_set():
                     break
+                if event["type"] == "session_created":
+                    # 首轮建会话：记录 session_id 并写回 status.json（映射）
+                    record["session_id"] = event["session_id"]
+                    write_status(output_dir, "running", session_id=event["session_id"])
                 log_parts.append(
                     f"[{event['type']}] {event.get('content', json.dumps({k: v for k, v in event.items() if k != 'type'}, ensure_ascii=False)[:200])}"
                 )
@@ -233,7 +256,7 @@ async def run_generation_task(task_id: str) -> None:
                     break
 
         if record["cancel_event"].is_set():
-            write_status(output_dir, "cancelled")
+            write_status(output_dir, "cancelled", session_id=record.get("session_id"))
             record["final_status"] = "cancelled"
             return
 
@@ -255,16 +278,32 @@ async def run_generation_task(task_id: str) -> None:
         if last_error:
             raise RuntimeError(f"导出失败（已重试）: {last_error}")
 
-        write_status(output_dir, "done", shot=shot_metadata, usage=record.get("usage"))
+        write_status(
+            output_dir,
+            "done",
+            shot=shot_metadata,
+            usage=record.get("usage"),
+            session_id=record.get("session_id"),
+        )
         record["final_status"] = "done"
         log_parts.append("[done] 导出完成")
     except TimeoutError:
-        write_status(output_dir, "failed", error="生成超时（超过 10 分钟），已终止")
+        write_status(
+            output_dir,
+            "failed",
+            error="生成超时（超过 10 分钟），已终止",
+            session_id=record.get("session_id"),
+        )
         record["final_status"] = "failed"
         kill_blender_processes(output_dir)
         log_parts.append("[timeout] 生成超时，已清理残留进程")
     except Exception as error:
-        write_status(output_dir, "failed", error=str(error))
+        write_status(
+            output_dir,
+            "failed",
+            error=str(error),
+            session_id=record.get("session_id"),
+        )
         record["final_status"] = "failed"
         log_parts.append(f"[failed] {error}")
     finally:
@@ -283,19 +322,41 @@ async def run_generation_task(task_id: str) -> None:
 
 @router.post("")
 def create_generation(payload: GeneratePayload) -> dict:
-    """创建生成任务（不立即启动；SSE 连接时启动）。"""
+    """创建生成任务（不立即启动；SSE 连接时启动）。
+
+    首轮（session_id=None）：新建时间戳文件夹。
+    二次修改（session_id 有值）：复用该会话对应的输出文件夹。
+    """
     if ACTIVE_TASKS:
         raise HTTPException(status_code=409, detail="已有生成任务进行中，请等待完成")
     if not payload.description.strip():
         raise HTTPException(status_code=422, detail="描述不能为空")
 
-    task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = get_output_root() / task_id
-    output_dir.mkdir(parents=True, exist_ok=True)
+    session_id = payload.session_id
+    if session_id:
+        # 二次修改：优先用前端传来的 folder_name，否则按 session_id 反查
+        folder_name = payload.folder_name
+        if not folder_name:
+            from backend import sessions as sessions_module
+
+            folder_name = sessions_module.find_folder_for_session(session_id)
+        if not folder_name:
+            raise HTTPException(status_code=404, detail="会话对应的输出文件夹不存在")
+        output_dir = get_output_root() / folder_name
+        if not output_dir.is_dir():
+            raise HTTPException(status_code=404, detail="会话对应的输出文件夹不存在")
+        task_id = folder_name
+    else:
+        # 首轮：新建时间戳文件夹
+        task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = get_output_root() / task_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+
     write_status(output_dir, "running")
     ACTIVE_TASKS[task_id] = {
         "description": payload.description.strip(),
         "output_dir": output_dir,
+        "session_id": session_id,
         "queue": asyncio.Queue(),
         "cancel_event": asyncio.Event(),
         "started": False,

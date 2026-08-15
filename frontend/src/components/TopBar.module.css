@@ -59,6 +59,24 @@
   background-color: #333333;
 }
 
+.newChatButton {
+  border-radius: var(--radius-pill-full);
+  padding: 7px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #3d6a99;
+  background-color: transparent;
+  color: #7fb0e0;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.newChatButton:hover {
+  background-color: #16202e;
+  color: #a8cfff;
+}
+
 .fileInput {
   display: none;
 }

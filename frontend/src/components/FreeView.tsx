@@ -51,11 +51,20 @@ export function FreeView({ gltfData }: FreeViewProperties) {
   // Tab toggles between browse and edit modes
   useEffect(() => {
     const handleTab = (event: KeyboardEvent) => {
-      if (event.key === 'Tab') {
-        event.preventDefault();
-        setViewMode((mode) => (mode === 'browse' ? 'edit' : 'browse'));
-        setSelectedObject(null); // clear character selection when switching
+      if (event.key !== 'Tab') return;
+      // Let Tab work normally inside inputs/textarea (focus navigation)
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
       }
+      event.preventDefault();
+      setViewMode((mode) => (mode === 'browse' ? 'edit' : 'browse'));
+      setSelectedObject(null); // clear character selection when switching
     };
     window.addEventListener('keydown', handleTab);
     return () => window.removeEventListener('keydown', handleTab);

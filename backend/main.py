@@ -13,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.settings import router as settings_router
 from backend.generate import router as generate_router
+from backend.sessions import router as sessions_router
+from backend.sessions import open_finder_router
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXPORT_SCRIPT = PROJECT_ROOT / "backend" / "export_shot.py"
@@ -30,6 +32,8 @@ application = FastAPI(title="Storyboard Shot Viewer")
 
 application.include_router(settings_router)
 application.include_router(generate_router)
+application.include_router(sessions_router)
+application.include_router(open_finder_router)
 
 application.add_middleware(
     CORSMiddleware,

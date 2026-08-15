@@ -22,9 +22,18 @@
 - ✅ 切片 06: 验证与收尾（26/26 测试 + 真实生成全链路验证 + README/.gitignore）
 - 文档: docs/v2/{prd,design,plan,tasks}.md
 
-## V3 — 候选（未排期）
+## V3 — 多会话历史 ✅ 已完成
 
-- 多任务队列 / 生成历史列表与场景库
-- 连续会话（基于当前场景增量修改）
+- 复用 Hermes `/api/sessions` 存储（历史列表 / 消息 / 删除 / 续接）
+- 历史下拉框（标题旁）+ 顶部"新的聊天" + 删除 + 打开 Finder
+- 二次修改（增量：改 script.py 重新生成，覆盖同文件夹）
+- 会话 ↔ 文件夹名映射（status.json session_id + 时间戳容差兜底）
+- 文档: docs/v3/（prd / design / plan / tasks）
+- 切片进度: 阶段 1-4（见 docs/v3/tasks.md）
+
+## 后续候选（未排期）
+
+- 多任务队列
 - 更多 provider / 模型选择扩展
 - 生成目录自动清理策略
+- 会话自定义重命名 / 搜索过滤

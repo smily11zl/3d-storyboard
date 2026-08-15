@@ -16,6 +16,22 @@ description: Use when the user wants to generate a 3D Blender scene with charact
   最终 .blend 保存为 `{OUTPUT_DIR}/scene.blend`，Blender 脚本保存为 `{OUTPUT_DIR}/script.py`
 - 不要在其他位置创建文件（shots/、render/、根目录等一律不写）
 
+## 修改模式（二次修改）
+
+当输出目录里 **`{OUTPUT_DIR}/script.py` 已存在**时，说明这是对已有场景的二次修改（不是首次生成）。
+
+**此时必须：**
+
+1. 先读回 `{OUTPUT_DIR}/script.py`，了解现有场景结构（人物、机位、环境、材质）
+2. **只修改用户要求的部分**（换人物 / 调机位 / 改材质 / 移动物体）
+3. 保留未涉及的内容（场景环境、灯光、其他人物和机位）
+4. 重新运行 `blender --background --python {OUTPUT_DIR}/script.py` 覆盖生成 scene.blend
+5. **不要新建代码文件**——在原有 script.py 上修改
+
+**不要**从头重新生成整个场景（会丢失之前已调好的细节）。修改后仍需执行步骤 4 的点积自检。
+
+---
+
 ## 角色库
 
 三个 Mixamo FBX 角色（各 49 块骨骼，前缀 `mixamorig:`）：

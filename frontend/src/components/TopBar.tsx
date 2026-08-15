@@ -11,6 +11,7 @@ export function TopBar({ onOpenSettings }: TopBarProperties) {
   const sidebarCollapsed = useStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useStore((state) => state.toggleSidebar);
   const uploadFile = useStore((state) => state.uploadFile);
+  const requestNewChat = useStore((state) => state.requestNewChat);
   const fileInputReference = useRef<HTMLInputElement | null>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -52,6 +53,13 @@ export function TopBar({ onOpenSettings }: TopBarProperties) {
           ☰
         </button>
         <span className={styles.logo}>Storyboard 3D</span>
+        <button
+          className={styles.newChatButton}
+          onClick={requestNewChat}
+          title="Start a new chat"
+        >
+          + New chat
+        </button>
         <button
           className={styles.uploadButton}
           onClick={handleUploadClick}

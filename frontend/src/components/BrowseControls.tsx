@@ -21,10 +21,21 @@ export function BrowseControls({ enabled }: BrowseControlsProperties) {
   const pressedKeys = useRef(new Set<string>());
 
   useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false;
+      return (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      );
+    };
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isTypingTarget(event.target)) return;
       pressedKeys.current.add(event.key.toLowerCase());
     };
     const handleKeyUp = (event: KeyboardEvent) => {
+      // Unconditionally clear: if the key went down while focused in a viewport
+      // but was released while typing, we must not leave it stuck pressed.
       pressedKeys.current.delete(event.key.toLowerCase());
     };
     window.addEventListener('keydown', handleKeyDown);
