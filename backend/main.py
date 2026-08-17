@@ -15,6 +15,7 @@ from backend.settings import router as settings_router
 from backend.generate import router as generate_router
 from backend.sessions import router as sessions_router
 from backend.sessions import open_finder_router
+from backend.shot_segments import parse_segments_sidecar
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXPORT_SCRIPT = PROJECT_ROOT / "backend" / "export_shot.py"
@@ -140,6 +141,19 @@ def read_frame_aspect(export_directory: str) -> float | None:
         return None
 
 
+def read_segments_sidecar(export_directory: str) -> dict | None:
+    """Read the segments.json sidecar written by export_shot.py.
+    Returns None if absent (older exports)."""
+    segments_filepath = os.path.join(export_directory, "segments.json")
+    if not os.path.isfile(segments_filepath):
+        return None
+    try:
+        with open(segments_filepath) as file_handle:
+            return json.load(file_handle)
+    except (ValueError, OSError):
+        return None
+
+
 async def run_export(input_filepath: str, output_directory: str) -> bool:
     """Run Blender export as an async subprocess."""
     command = [
@@ -182,6 +196,33 @@ def load_shot_metadata(export_hash: str) -> dict | None:
         return None
     with open(cache_path) as file_handle:
         return json.load(file_handle)
+
+
+def build_shot_metadata(export_hash: str, export_directory, gltf_filepath: str) -> dict:
+    """构建完整 shot 元数据：解析 glTF + 合并 sidecar（frame aspect / segments）。
+
+    「上传」和「重新加载」两条路径共用此函数，保证 segments / duration
+    两边一致地从 sidecar 合并。
+    """
+    metadata = parse_gltf_for_metadata(gltf_filepath)
+    metadata["export_hash"] = export_hash
+    metadata["gltf_output_url"] = f"/static/exports/{export_hash}/{GLTF_OUTPUT_NAME}"
+
+    frame_aspect = read_frame_aspect(str(export_directory))
+    if frame_aspect:
+        metadata["frame_aspect"] = frame_aspect
+
+    segments_sidecar = read_segments_sidecar(str(export_directory))
+    if segments_sidecar is not None:
+        segments_result = parse_segments_sidecar(segments_sidecar)
+        metadata["segments"] = segments_result["segments"]
+        # 镜头段动画用绝对时间，glTF 各 animation 的 max time 不再等于总时长；
+        # 真实总时长 = 段的最大绝对 end_time。
+        segment_end_times = [segment["end_time"] for segment in segments_result["segments"]]
+        if segment_end_times:
+            metadata["duration_seconds"] = round(max(segment_end_times), 3)
+
+    return metadata
 
 
 @application.post("/api/shots")
@@ -234,12 +275,7 @@ async def upload_shot(file: UploadFile = File(...), force: bool = False):
                 detail="Export completed but scene.gltf was not created",
             )
 
-        metadata = parse_gltf_for_metadata(gltf_filepath)
-        metadata["export_hash"] = export_hash
-        metadata["gltf_output_url"] = f"/static/exports/{export_hash}/{GLTF_OUTPUT_NAME}"
-        frame_aspect = read_frame_aspect(str(export_directory))
-        if frame_aspect:
-            metadata["frame_aspect"] = frame_aspect
+        metadata = build_shot_metadata(export_hash, export_directory, gltf_filepath)
 
         # Save metadata cache
         save_shot_metadata(export_hash, metadata)

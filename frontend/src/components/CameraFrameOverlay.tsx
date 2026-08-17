@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { useStore, isCameraActive } from '../store';
 import styles from './CameraView.module.css';
 
 /** Default camera frame aspect when the scene doesn't specify one (Blender's
  *  default render ratio is 16:9). */
 export const DEFAULT_FRAME_ASPECT = 16 / 9;
+
+/** 生效（当前时间点在段内）→ 蓝；未生效（待机）→ 红。 */
+const ACTIVE_BORDER_COLOR = '#2f7bff';
+const INACTIVE_BORDER_COLOR = '#ff4d4f';
 
 interface FrameRect {
   x: number;
@@ -21,7 +25,14 @@ interface FrameRect {
 export function CameraFrameOverlay() {
   const containerReference = useRef<HTMLDivElement | null>(null);
   const [frame, setFrame] = useState<FrameRect | null>(null);
-  const frameAspect = useStore((state) => state.shot?.frame_aspect) ?? DEFAULT_FRAME_ASPECT;
+  const shot = useStore((state) => state.shot);
+  const frameAspect = shot?.frame_aspect ?? DEFAULT_FRAME_ASPECT;
+  const currentTime = useStore((state) => state.currentTime);
+  const activeCameraName = useStore((state) => state.activeCameraName);
+
+  // 当前激活相机是否生效 → 边框蓝/红（无段时 fallback 到该相机是否有动画）。
+  const isActive = isCameraActive(shot, activeCameraName, currentTime);
+  const borderColor = isActive ? ACTIVE_BORDER_COLOR : INACTIVE_BORDER_COLOR;
 
   useEffect(() => {
     const container = containerReference.current;
@@ -81,7 +92,7 @@ export function CameraFrameOverlay() {
         style={{ left: frame.x + frame.w, top: frame.y, width: `calc(100% - ${frame.x + frame.w}px)`, height: frame.h }}
       />
       {/* Camera frame border */}
-      <div className={styles.frameBorder} style={{ left: frame.x, top: frame.y, width: frame.w, height: frame.h }} />
+      <div className={styles.frameBorder} style={{ left: frame.x, top: frame.y, width: frame.w, height: frame.h, borderColor }} />
     </div>
   );
 }

@@ -5,7 +5,7 @@ model:
 agent:
   reasoning_overrides:
     deepseek-v4-flash: max
-    deepseek-v4-pro: max
+    deepseek-v4-pro: high
 platforms:
   api_server:
     enabled: true

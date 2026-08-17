@@ -9,6 +9,21 @@ export interface AnimationInfo {
   animation_length_seconds: number;
 }
 
+export interface Pose {
+  position: [number, number, number];
+  rotation: [number, number, number];
+}
+
+export interface ShotSegment {
+  camera_name: string;
+  segment_name: string;
+  start_time: number;
+  end_time: number;
+  start_pose: Pose;
+  end_pose: Pose;
+  segment_type: "S" | "C";
+}
+
 export interface ShotMetadata {
   export_hash: string;
   gltf_output_url: string;
@@ -18,6 +33,8 @@ export interface ShotMetadata {
   frames_per_second: number;
   /** Camera frame width/height ratio from Blender's render resolution. */
   frame_aspect?: number;
+  /** V4: identified shot segments (from segments.json sidecar). */
+  segments?: ShotSegment[];
 }
 
 export interface ShotState {

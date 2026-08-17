@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { Environment, Lightformer } from '@react-three/drei';
 import { SceneModel } from './SceneModel';
 import { CameraFrameOverlay } from './CameraFrameOverlay';
+import { SegmentList } from './SegmentList';
 import { useStore } from '../store';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import styles from './CameraView.module.css';
@@ -18,29 +19,17 @@ export function CameraView({ gltfData }: CameraViewProperties) {
 
   if (!shot) return null;
 
-  const handleCameraChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    useStore.getState().setActiveCamera(event.target.value);
-  };
-
   return (
     <div className={styles.panel}>
       <div className={styles.header}>
         <span className={styles.label}>Camera View</span>
-        <select
-          className={styles.cameraSelect}
-          value={activeCameraName ?? ''}
-          onChange={handleCameraChange}
-        >
-          {cameras.length === 0 ? (
+        {cameras.length > 0 ? (
+          <SegmentList />
+        ) : (
+          <select className={styles.cameraSelect} value="" disabled>
             <option value="">Default View</option>
-          ) : (
-            cameras.map((camera) => (
-              <option key={camera.camera_name} value={camera.camera_name}>
-                {camera.camera_name}
-              </option>
-            ))
-          )}
-        </select>
+          </select>
+        )}
       </div>
       <div className={styles.canvasContainer}>
         <Canvas

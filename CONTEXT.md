@@ -23,3 +23,12 @@
 | **Incremental Edit (二次修改)** | Continuing a session: the agent reads back its `script.py`, edits it, and re-runs to overwrite `scene.blend` — rather than writing a fresh script. |
 | **session_id ↔ folder mapping** | The link between a Hermes session UUID and the timestamped output folder name, persisted in `status.json`. |
 | **Reasoning (思考/推理)** | The model's internal thinking step, stored per assistant message in Hermes's `reasoning` field. Shown in history as a collapsible "Thinking" block. Not streamed live — only available on history replay. |
+| **Shot Segment (镜头段)** | A segment on the timeline that references one camera object and defines its motion over a time range (start pose → end pose + easing + holds). V4's core unit. Distinct from **Shot** (the whole scene). |
+| **Pose (姿态)** | A camera's position + orientation at a single moment. A segment's motion is defined by its start pose and end pose. |
+| **Simple Segment (S / 可编辑段)** | A shot segment whose motion has ≤2 distinct keyframe poses (+ easing) — expressible and manually editable. |
+| **Complex Segment (C / 自由段)** | A shot segment with >2 distinct keyframe poses — free/composite motion, read-only (not manually editable). |
+| **Sequence (序列)** | Shot segments whose time ranges don't overlap, ordered consecutively on one timeline (the V4 target model). |
+| **Parallel (并行)** | Shot segments whose time ranges overlap (the current multi-camera model) — rendered as multiple tracks. |
+| **Camera Reuse (机位复用)** | One camera object referenced by multiple shot segments. |
+| **Hold (起幅/落幅停留)** | A camera staying still at a segment's start/end, implemented by duplicating the same keyframe pose (doesn't increase pose count). |
+| **Easing (缓动)** | Acceleration/deceleration during motion, implemented via keyframe tangents (glTF CUBICSPLINE), not extra keyframes. |

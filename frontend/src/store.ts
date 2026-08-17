@@ -130,3 +130,27 @@ export const useStore = create<StoreState>((set) => ({
       characterTransforms: {},
     }),
 }));
+
+/** 判断某相机在当前时间点是否「生效」：
+ *  - 该相机有段：当前时间落在其某段 [start_time, end_time) 内 → 生效
+ *  - 该相机无段（纯静态零动画）：整段兜底，视为整个时间轴生效
+ */
+export function isCameraActive(
+  shot: ShotMetadata | null,
+  cameraName: string | null,
+  currentTime: number,
+): boolean {
+  if (!shot || !cameraName) return false;
+  const segments = shot.segments ?? [];
+  const cameraSegments = segments.filter(
+    (segment) => segment.camera_name === cameraName,
+  );
+  if (cameraSegments.length > 0) {
+    return cameraSegments.some(
+      (segment) =>
+        currentTime >= segment.start_time &&
+        currentTime < segment.end_time,
+    );
+  }
+  return true;
+}

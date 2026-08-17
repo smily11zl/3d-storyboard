@@ -18,7 +18,7 @@ from backend import agent_service, settings as settings_module
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GENERATE_ROOT = Path(os.environ.get("GENERATE_ROOT", PROJECT_ROOT / "generate"))
-GENERATION_TIMEOUT_SECONDS = int(os.environ.get("GENERATION_TIMEOUT_SECONDS", "600"))
+GENERATION_TIMEOUT_SECONDS = int(os.environ.get("GENERATION_TIMEOUT_SECONDS", "1200"))
 
 
 def get_output_root() -> Path:
@@ -167,14 +167,9 @@ async def export_scene(blend_path: Path, output_dir: Path) -> dict:
         if not gltf_filepath.is_file():
             raise RuntimeError("Export completed but scene.gltf was not created")
 
-        metadata = main_module.parse_gltf_for_metadata(str(gltf_filepath))
-        metadata["export_hash"] = export_hash
-        metadata["gltf_output_url"] = (
-            f"/static/exports/{export_hash}/{main_module.GLTF_OUTPUT_NAME}"
+        metadata = main_module.build_shot_metadata(
+            export_hash, export_directory, str(gltf_filepath)
         )
-        frame_aspect = main_module.read_frame_aspect(str(export_directory))
-        if frame_aspect:
-            metadata["frame_aspect"] = frame_aspect
         main_module.save_shot_metadata(export_hash, metadata)
         main_module.enforce_disk_quota()
         return metadata
@@ -291,7 +286,7 @@ async def run_generation_task(task_id: str) -> None:
         write_status(
             output_dir,
             "failed",
-            error="生成超时（超过 10 分钟），已终止",
+            error=f"生成超时（超过 {GENERATION_TIMEOUT_SECONDS // 60} 分钟），已终止",
             session_id=record.get("session_id"),
         )
         record["final_status"] = "failed"
@@ -371,6 +366,39 @@ def get_generation_status(task_id: str) -> dict:
     if not status_file.exists():
         raise HTTPException(status_code=404, detail="任务不存在")
     return json.loads(status_file.read_text(encoding="utf-8"))
+
+
+@router.post("/{task_id}/reload")
+async def reload_shot(task_id: str) -> dict:
+    """重新转化会话文件夹里的 scene.blend（相当于自动重新上传一次）。
+
+    切换聊天时调用：从源 blend 重新派生最新 shot，而不是用旧的缓存 shot。
+    保留 status.json 里的 session_id / usage，只更新 shot。
+    """
+    output_dir = get_output_root() / task_id
+    blend_path = output_dir / "scene.blend"
+    if not blend_path.exists():
+        raise HTTPException(status_code=404, detail="blend 不存在")
+
+    # 读旧 status.json，保留 session_id / usage（若有）
+    status_file = output_dir / "status.json"
+    previous_status: dict = {}
+    if status_file.exists():
+        try:
+            previous_status = json.loads(status_file.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            previous_status = {}
+
+    shot_metadata = await export_scene(blend_path, output_dir)
+
+    write_status(
+        output_dir,
+        "done",
+        shot=shot_metadata,
+        usage=previous_status.get("usage"),
+        session_id=previous_status.get("session_id"),
+    )
+    return shot_metadata
 
 
 @router.get("/{task_id}/stream")

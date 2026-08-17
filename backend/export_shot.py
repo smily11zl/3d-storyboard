@@ -59,6 +59,58 @@ def export_blend_to_gltf(input_filepath, output_directory):
                     if not vertex_group.name.startswith(prefix):
                         vertex_group.name = prefix + vertex_group.name
 
+    # Bake camera constraint rotation into explicit keyframes before export.
+    # The glTF exporter omits the rotation channel for segments whose orientation
+    # is constant (e.g. a straight dolly-in where the camera keeps looking at the
+    # same target), falling back to the node's initial rotation — which for a
+    # constraint-driven camera is the exporter's fixed camera transform (pointing
+    # straight up). Sampling the constraint result at each segment's keyframes and
+    # writing explicit rotation keyframes forces every segment to carry a correct
+    # rotation animation. This is exporter-side, so any user-authored .blend with
+    # constraint-driven cameras exports correctly — no authoring rules required.
+    for camera_object in bpy.data.objects:
+        if camera_object.type != 'CAMERA' or not camera_object.constraints:
+            continue
+        animation_data = camera_object.animation_data
+        if animation_data is None:
+            continue
+        scene = bpy.context.scene
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        for track in animation_data.nla_tracks:
+            for strip in track.strips:
+                action = strip.action
+                if action is None:
+                    continue
+                keyframe_frames = set()
+                for fcurve in action.fcurves:
+                    if fcurve.data_path == "location":
+                        for keyframe_point in fcurve.keyframe_points:
+                            keyframe_frames.add(int(round(keyframe_point.co[0])))
+                if not keyframe_frames:
+                    continue
+                for frame in sorted(keyframe_frames):
+                    scene.frame_set(frame)
+                    depsgraph.update()
+                    evaluated_camera = camera_object.evaluated_get(depsgraph)
+                    rotation_euler = evaluated_camera.matrix_world.to_euler()
+                    for axis_index in range(3):
+                        rotation_fcurve = None
+                        for fcurve in action.fcurves:
+                            if (
+                                fcurve.data_path == "rotation_euler"
+                                and fcurve.array_index == axis_index
+                            ):
+                                rotation_fcurve = fcurve
+                                break
+                        if rotation_fcurve is None:
+                            rotation_fcurve = action.fcurves.new(
+                                data_path="rotation_euler", index=axis_index
+                            )
+                        rotation_fcurve.keyframe_points.insert(
+                            frame, rotation_euler[axis_index]
+                        )
+                        rotation_fcurve.keyframe_points[-1].interpolation = "LINEAR"
+
     gltf_filepath = os.path.join(output_directory, "scene.gltf")
 
     # Export to glTF (separate JSON + .bin format)
@@ -99,9 +151,109 @@ def export_blend_to_gltf(input_filepath, output_directory):
     with open(aspect_filepath, "w", encoding="utf-8") as aspect_file:
         aspect_file.write(str(frame_aspect))
 
+    # Shot segments = camera NLA strips (one strip per segment). glTF loses the
+    # strip's absolute timeline offset, so persist segments as a sidecar too.
+    segments = extract_segments_from_nla()
+    segments_filepath = os.path.join(output_directory, "segments.json")
+    with open(segments_filepath, "w", encoding="utf-8") as segments_file:
+        json.dump({"segments": segments}, segments_file, indent=2, ensure_ascii=False)
+
     print(json.dumps(scene_info, indent=2, ensure_ascii=False))
 
     return True
+
+
+def _action_keyframe_times(action):
+    """收集 action 里所有 F-Curve 的关键帧时刻（去重、排序）。"""
+    times = set()
+    for fcurve in action.fcurves:
+        for keyframe in fcurve.keyframe_points:
+            times.add(round(keyframe.co.x, 2))
+    return sorted(times)
+
+
+def _action_pose_at(action, time):
+    """读 action 在某个时刻的 position + rotation（用 F-Curve evaluate 求值）。"""
+    position = [0.0, 0.0, 0.0]
+    rotation = [0.0, 0.0, 0.0]
+    for fcurve in action.fcurves:
+        if fcurve.data_path == "location" and 0 <= fcurve.array_index < 3:
+            position[fcurve.array_index] = round(fcurve.evaluate(time), 4)
+        elif fcurve.data_path == "rotation_euler" and 0 <= fcurve.array_index < 3:
+            rotation[fcurve.array_index] = round(fcurve.evaluate(time), 4)
+    return {"position": position, "rotation": rotation}
+
+
+def _count_distinct_poses(action):
+    """数 action 里去重后的 pose 数（position + rotation 组合）。"""
+    poses = set()
+    for time in _action_keyframe_times(action):
+        pose = _action_pose_at(action, time)
+        poses.add((tuple(pose["position"]), tuple(pose["rotation"])))
+    return len(poses)
+
+
+def extract_segments_from_nla():
+    """读相机动画，提取镜头段（相机名 / 绝对起止时间 / S-C / 起终点 pose）。
+
+    优先读 NLA strips（约定：一个 track 一个 strip）。
+    无 NLA track 但直接挂了 Action 的相机，把 Action 的关键帧范围当成一个段。
+    S（简单）= 去重后 pose 数 ≤ 2；C（复杂）= > 2。
+    """
+    import bpy
+    segments = []
+    frames_per_second = bpy.context.scene.render.fps
+    for camera_object in bpy.data.objects:
+        if camera_object.type != "CAMERA":
+            continue
+        animation_data = camera_object.animation_data
+        if animation_data is None:
+            continue
+
+        # 无 NLA track 但直接挂了 Action：把 Action 的关键帧范围当成一个段
+        # （旧项目常见格式：一个相机直接挂 `cam_01动作`，没用 NLA）。
+        if not animation_data.nla_tracks and animation_data.action is not None:
+            action = animation_data.action
+            keyframe_times = _action_keyframe_times(action)
+            if not keyframe_times:
+                continue
+            pose_count = _count_distinct_poses(action)
+            segment_type = "S" if pose_count <= 2 else "C"
+            start_pose = _action_pose_at(action, keyframe_times[0])
+            end_pose = _action_pose_at(action, keyframe_times[-1])
+            segments.append({
+                "camera_name": camera_object.name,
+                "segment_name": action.name,
+                "start_time": round((keyframe_times[0] - 1) / frames_per_second, 3),
+                "end_time": round(keyframe_times[-1] / frames_per_second, 3),
+                "start_pose": start_pose,
+                "end_pose": end_pose,
+                "segment_type": segment_type,
+            })
+            continue
+
+        for nla_track in animation_data.nla_tracks:
+            for strip in nla_track.strips:
+                action = strip.action
+                if action is None:
+                    continue
+                pose_count = _count_distinct_poses(action)
+                segment_type = "S" if pose_count <= 2 else "C"
+                keyframe_times = _action_keyframe_times(action)
+                if not keyframe_times:
+                    continue
+                start_pose = _action_pose_at(action, keyframe_times[0])
+                end_pose = _action_pose_at(action, keyframe_times[-1])
+                segments.append({
+                    "camera_name": camera_object.name,
+                    "segment_name": strip.name,
+                    "start_time": round((strip.frame_start - 1) / frames_per_second, 3),
+                    "end_time": round(strip.frame_end / frames_per_second, 3),
+                    "start_pose": start_pose,
+                    "end_pose": end_pose,
+                    "segment_type": segment_type,
+                })
+    return segments
 
 
 def get_scene_summary(gltf_filepath):

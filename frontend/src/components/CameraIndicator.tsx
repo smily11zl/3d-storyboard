@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { useStore, isCameraActive } from '../store';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 
@@ -11,20 +12,26 @@ interface CameraIndicatorProperties {
  *  plane is often 1000m — way too long for a wireframe hint. */
 const FRUSTUM_DISPLAY_FAR = 6;
 
-/** Wireframe color (Blender camera orange) */
-const FRUSTUM_COLOR = '#ff8c42';
+/** 生效（当前时间点在段内）→ 蓝；未生效（待机）→ 红。 */
+const ACTIVE_COLOR = '#2f7bff';
+const INACTIVE_COLOR = '#ff4d4f';
 
 interface CameraVisualization {
   cameraNode: THREE.PerspectiveCamera;
   helperCamera: THREE.PerspectiveCamera;
   frustumLines: THREE.LineSegments;
   frustumPositions: Float32Array;
+  bodyMaterial: THREE.MeshBasicMaterial;
+  frustumMaterial: THREE.LineDashedMaterial;
 }
 
 /** Shows Blender-style camera objects in the Free View:
  *  - semi-transparent cone body at the camera position
  *  - shortened frustum wireframe pointing along the camera direction
  *  Both follow the camera's animation automatically.
+ *
+ *  颜色区分「生效/未生效」：生效蓝、未生效红。
+ *  线型区分「选中/未选中」：选中实线、未选中虚线。
  *
  *  The frustum is drawn manually (12 lines: near/far rectangles + 4
  *  connectors) instead of using CameraHelper, because:
@@ -43,15 +50,13 @@ export function CameraIndicator({ gltfData }: CameraIndicatorProperties) {
         // 1. Semi-transparent cone body at the camera position.
         // Cone geometry points +Y by default; rotate so the tip points
         // -Z (the camera's forward direction), like Blender's camera.
-        const body = new THREE.Mesh(
-          new THREE.ConeGeometry(0.18, 0.4, 12),
-          new THREE.MeshBasicMaterial({
-            color: FRUSTUM_COLOR,
-            transparent: true,
-            opacity: 0.5,
-            depthWrite: false,
-          }),
-        );
+        const bodyMaterial = new THREE.MeshBasicMaterial({
+          color: INACTIVE_COLOR,
+          transparent: true,
+          opacity: 0.5,
+          depthWrite: false,
+        });
+        const body = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.4, 12), bodyMaterial);
         body.rotation.x = -Math.PI / 2;
         cameraNode.add(body);
 
@@ -65,11 +70,22 @@ export function CameraIndicator({ gltfData }: CameraIndicatorProperties) {
         const frustumPositions = new Float32Array(24 * 3); // 24 vertices
         const frustumGeometry = new THREE.BufferGeometry();
         frustumGeometry.setAttribute('position', new THREE.BufferAttribute(frustumPositions, 3));
-        const frustumMaterial = new THREE.LineBasicMaterial({ color: FRUSTUM_COLOR });
+        const frustumMaterial = new THREE.LineDashedMaterial({
+          color: INACTIVE_COLOR,
+          dashSize: 0.15,
+          gapSize: 0.12,
+        });
         const frustumLines = new THREE.LineSegments(frustumGeometry, frustumMaterial);
         gltfData.scene.add(frustumLines);
 
-        visualizations.push({ cameraNode, helperCamera, frustumLines, frustumPositions });
+        visualizations.push({
+          cameraNode,
+          helperCamera,
+          frustumLines,
+          frustumPositions,
+          bodyMaterial,
+          frustumMaterial,
+        });
       }
     });
 
@@ -90,14 +106,42 @@ export function CameraIndicator({ gltfData }: CameraIndicatorProperties) {
   }, [gltfData]);
 
   // Recompute frustum vertices each frame from the CURRENT camera
-  // transform (explicitly update matrixWorld first so we never read a
-  // stale value from the previous render).
+  // transform, and update color/dash from the current state.
   useFrame(() => {
+    const store = useStore.getState();
+    const activeCameraName = store.activeCameraName;
+    const currentTime = store.currentTime;
+
     for (const visualization of visualizationsReference.current) {
-      const { cameraNode, helperCamera, frustumLines, frustumPositions } = visualization;
+      const {
+        cameraNode,
+        helperCamera,
+        frustumLines,
+        frustumPositions,
+        bodyMaterial,
+        frustumMaterial,
+      } = visualization;
 
       cameraNode.updateWorldMatrix(true, false);
       helperCamera.matrixWorld.copy(cameraNode.matrixWorld);
+
+      // 生效/未生效（颜色）：有段看段覆盖，无段看该相机是否有动画。
+      const cameraName = cameraNode.name;
+      const isActive = isCameraActive(store.shot, cameraName, currentTime);
+      const color = isActive ? ACTIVE_COLOR : INACTIVE_COLOR;
+      bodyMaterial.color.set(color);
+      frustumMaterial.color.set(color);
+
+      // 选中/未选中（线型）：选中实线，未选中虚线。
+      // dashSize 远大于线长时整体显示为实线。
+      const isSelected = cameraName === activeCameraName;
+      if (isSelected) {
+        frustumMaterial.dashSize = 10000;
+        frustumMaterial.gapSize = 0;
+      } else {
+        frustumMaterial.dashSize = 0.15;
+        frustumMaterial.gapSize = 0.12;
+      }
 
       // 8 frustum corners: NDC (±1, ±1, ±1) → world
       const corner = new THREE.Vector3();
@@ -137,6 +181,9 @@ export function CameraIndicator({ gltfData }: CameraIndicatorProperties) {
       const positionAttribute = frustumLines.geometry.getAttribute('position') as THREE.BufferAttribute;
       positionAttribute.array.set(linePositions);
       positionAttribute.needsUpdate = true;
+
+      // 虚线需要每帧重算线距离（顶点变了长度也变）
+      frustumLines.computeLineDistances();
     }
   });
 

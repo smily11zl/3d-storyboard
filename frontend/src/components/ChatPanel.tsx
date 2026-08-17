@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
-import type { SessionSummary } from '../types';
+import type { SessionSummary, ShotSegment } from '../types';
 import { HistoryDropdown } from './HistoryDropdown';
 import styles from './ChatPanel.module.css';
 
@@ -25,6 +25,7 @@ interface GenerateStatusResponse {
     duration_seconds: number;
     frames_per_second: number;
     frame_aspect?: number;
+    segments?: ShotSegment[];
   };
 }
 
@@ -120,15 +121,16 @@ export function ChatPanel() {
     } catch {
       // best-effort
     }
-    // Restore the scene if this session produced an output
+    // Restore the scene if this session produced an output.
+    // 切换聊天时重新转化 blend（从源派生最新 shot），而不是用旧缓存 shot。
     if (session.has_output) {
       try {
-        const statusResponse = await fetch(`/api/generate/${session.folder_name}`);
-        if (statusResponse.ok) {
-          const status = (await statusResponse.json()) as GenerateStatusResponse;
-          if (status.status === 'done' && status.shot) {
-            loadShotIntoViewer(status.shot);
-          }
+        const reloadResponse = await fetch(`/api/generate/${session.folder_name}/reload`, {
+          method: 'POST',
+        });
+        if (reloadResponse.ok) {
+          const shot = await reloadResponse.json();
+          loadShotIntoViewer(shot);
         }
       } catch {
         // best-effort
@@ -173,6 +175,7 @@ export function ChatPanel() {
         duration_seconds: shot.duration_seconds,
         frames_per_second: shot.frames_per_second,
         frame_aspect: shot.frame_aspect,
+        segments: shot.segments ?? [],
       },
       activeCameraName: shot.cameras.length > 0 ? shot.cameras[0].camera_name : null,
       durationSeconds: shot.duration_seconds,
