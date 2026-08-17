@@ -56,3 +56,14 @@ T1（单段识别地基）
 - [x] 修复段边界 1 帧 gap：export_shot.py `start_time` 改 `(frame_start-1)/fps`
 - [x] 切换聊天自动重转（reload 端点）+ 下拉标签英文 + 生成超时默认 20 分钟
 - [x] 验证：前端 tsc exit 0 + 后端 pytest 48 passed + 实际导出段边界 gap=0
+
+## T6 — S/C 判定重构（分通道 + 约束元数据 + 直接挂 Action 兼容）✅ 完成
+
+- [x] 段识别补全：直接挂 Action（无 NLA track）的相机把 Action 关键帧范围当一个段（旧项目兼容）
+- [x] S/C 判定改为分通道（位置/朝向各自判）：约束 + 插值 + 去重值
+- [x] 约束分类：TRACK_TO 等 lookAt 系可前端无损重演 → 算简单；FOLLOW_PATH / LIMIT 难重演 → 复杂
+- [x] 插值分类：LINEAR / CONSTANT / BEZIER（= glTF LINEAR/STEP/CUBICSPLINE）→ 简单；特殊缓动 → 复杂
+- [x] 去重值：≤2 → 简单；3+（折线）→ 复杂
+- [x] 约束元数据（target / track_axis / up_axis）写入 sidecar，供前端 lookAt 重演 + V5 编辑分流
+- [x] 前端 types.ts 加 ConstraintEntry/SegmentConstraint；SegmentList 支持 constraint（segment_type 回到 S/C 两档）
+- [x] 验证：tsc exit 0 + pytest 48 passed + 实际导出（TRACK_TO 段判 S、位置折线段判 C）

@@ -14,6 +14,18 @@ export interface Pose {
   rotation: [number, number, number];
 }
 
+export interface ConstraintEntry {
+  type: string;
+  target: string | null;
+  track_axis?: string;
+  up_axis?: string;
+}
+
+export interface SegmentConstraint {
+  position?: ConstraintEntry[];
+  rotation?: ConstraintEntry[];
+}
+
 export interface ShotSegment {
   camera_name: string;
   segment_name: string;
@@ -22,6 +34,7 @@ export interface ShotSegment {
   start_pose: Pose;
   end_pose: Pose;
   segment_type: "S" | "C";
+  constraint?: SegmentConstraint;
 }
 
 export interface ShotMetadata {

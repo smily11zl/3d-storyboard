@@ -10,8 +10,8 @@
 3. **机位复用**：一个相机对象可被多个镜头段引用
 4. **序列 vs 并行**：靠「时间范围是否重叠」判断（不重叠=序列，重叠=并行）
 5. **多轨道是底层**：单时间轴是「段不重叠」时的特例
-6. **S/C 判据**：去重后的关键帧 pose 数 ≤2 = S（可编辑），>2 = C（自由）
-7. **S/C 准确表述**：S = 能用「2 pose + LINEAR/CUBICSPLINE」无损表达；C = 做不到的（多关键帧 / Back·Bounce·Elastic / 约束 / 复杂贝塞尔），导出后必然 3+ pose
+6. **S/C 判定（分通道，最终定稿）**：每个段拆「位置/朝向」两条通道各自判，都简单 → S，任一复杂 → C
+7. **通道「简单」三条件**：① 无难重演约束（TRACK_TO 等 lookAt 系可前端重演、算简单；FOLLOW_PATH/LIMIT 算复杂）② 插值 glTF 可承载（LINEAR/CONSTANT/BEZIER；特殊缓动算复杂）③ 去重值 ≤2（3+ pose 折线算复杂）。详见 design.md 4.1
 8. **段边界** = 独立 Action + NLA track 的边界（blend 显式存储）
 9. **每段一个独立 NLA track**（一个 track 只放一个 strip，禁止多 strip——实测会导出 0 动画）
 10. **glTF 丢失绝对时间**：strip 的 frame_start 偏移不导出 → 段的绝对起止时间靠 sidecar 补救

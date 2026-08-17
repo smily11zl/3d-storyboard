@@ -25,10 +25,15 @@
 | **Reasoning (思考/推理)** | The model's internal thinking step, stored per assistant message in Hermes's `reasoning` field. Shown in history as a collapsible "Thinking" block. Not streamed live — only available on history replay. |
 | **Shot Segment (镜头段)** | A segment on the timeline that references one camera object and defines its motion over a time range (start pose → end pose + easing + holds). V4's core unit. Distinct from **Shot** (the whole scene). |
 | **Pose (姿态)** | A camera's position + orientation at a single moment. A segment's motion is defined by its start pose and end pose. |
-| **Simple Segment (S / 可编辑段)** | A shot segment whose motion has ≤2 distinct keyframe poses (+ easing) — expressible and manually editable. |
-| **Complex Segment (C / 自由段)** | A shot segment with >2 distinct keyframe poses — free/composite motion, read-only (not manually editable). |
-| **Sequence (序列)** | Shot segments whose time ranges don't overlap, ordered consecutively on one timeline (the V4 target model). |
-| **Parallel (并行)** | Shot segments whose time ranges overlap (the current multi-camera model) — rendered as multiple tracks. |
+| **Simple Segment (S / 可编辑段)** | A shot segment where both channels (position & orientation) are simple: no hard-to-replay constraint, glTF-loadable interpolation, and ≤2 distinct values per channel. Editable. |
+| **Complex Segment (C / 自由段)** | A shot segment where either channel is complex: hard-to-replay constraint (FOLLOW_PATH / LIMIT), non-glTF easing (BACK / BOUNCE / ELASTIC), or >2 distinct values (polyline). Not editable via two-pose editing. |
+| **Per-channel Classification (分通道判定)** | S/C is decided per channel (position / orientation) separately, then combined: both simple → S, either complex → C. |
+| **Constraint (约束)** | A Blender object constraint that drives a transform by rule (e.g. TRACK_TO points the camera at a target). glTF has no constraint semantics, so it's replayed by the frontend or baked. |
+| **lookAt 约束系** | TRACK_TO / LOCKED_TRACK / DAMPED_TRACK — orientation = `lookAt(position, target position)`, a deterministic function the frontend can replay. |
+| **复制约束系** | COPY_LOCATION / COPY_ROTATION — copy a target's position/rotation, replayable by reading the target node. |
+| **Constraint Metadata (约束元数据)** | Per-segment constraint record in the sidecar: type / target / track_axis / up_axis. Used for frontend lookAt replay + V5 constraint editing. |
+| ~~Sequence (序列)~~ | **历史术语**：shot segments whose time ranges don't overlap, ordered consecutively on one timeline. 被「一个相机一个轨道」模型替代（V4 T5 轨道模型重构，删除 `timeline_mode`，2026-08）。 |
+| ~~Parallel (并行)~~ | **历史术语**：shot segments whose time ranges overlap — rendered as multiple tracks. 同上，被「一个相机一个轨道」模型替代。 |
 | **Camera Reuse (机位复用)** | One camera object referenced by multiple shot segments. |
 | **Hold (起幅/落幅停留)** | A camera staying still at a segment's start/end, implemented by duplicating the same keyframe pose (doesn't increase pose count). |
 | **Easing (缓动)** | Acceleration/deceleration during motion, implemented via keyframe tangents (glTF CUBICSPLINE), not extra keyframes. |

@@ -184,21 +184,126 @@ def _action_pose_at(action, time):
     return {"position": position, "rotation": rotation}
 
 
-def _count_distinct_poses(action):
-    """数 action 里去重后的 pose 数（position + rotation 组合）。"""
-    poses = set()
-    for time in _action_keyframe_times(action):
-        pose = _action_pose_at(action, time)
-        poses.add((tuple(pose["position"]), tuple(pose["rotation"])))
-    return len(poses)
+# glTF 原生支持的插值（Blender 名）：LINEAR / CONSTANT(=STEP) / BEZIER(=CUBICSPLINE)
+SIMPLE_INTERPOLATIONS = {"LINEAR", "CONSTANT", "BEZIER"}
+
+# 约束按作用通道分类：位置约束 vs 朝向约束
+POSITION_CONSTRAINT_TYPES = {"FOLLOW_PATH", "COPY_LOCATION", "LIMIT_LOCATION"}
+ROTATION_CONSTRAINT_TYPES = {
+    "TRACK_TO", "LOCKED_TRACK", "DAMPED_TRACK", "COPY_ROTATION", "LIMIT_ROTATION",
+}
+
+# 难前端重演的约束（路径/限制类）：归入复杂。
+# 不在其中的（TRACK_TO / LOCKED_TRACK / DAMPED_TRACK / COPY_*）可前端重演，归入简单。
+COMPLEX_CONSTRAINT_TYPES = {"FOLLOW_PATH", "LIMIT_LOCATION", "LIMIT_ROTATION"}
+
+
+def _channel_keyframe_times(action, data_path):
+    """收集某个通道（location / rotation_euler）自己的关键帧时刻。"""
+    times = set()
+    for fcurve in action.fcurves:
+        if fcurve.data_path != data_path:
+            continue
+        for keyframe in fcurve.keyframe_points:
+            times.add(round(keyframe.co.x, 2))
+    return sorted(times)
+
+
+def _channel_values(action, data_path):
+    """读某个通道在「该通道自己的关键帧时刻」的值列表。"""
+    values = []
+    for time in _channel_keyframe_times(action, data_path):
+        value = [0.0, 0.0, 0.0]
+        for fcurve in action.fcurves:
+            if fcurve.data_path == data_path and 0 <= fcurve.array_index < 3:
+                value[fcurve.array_index] = round(fcurve.evaluate(time), 4)
+        values.append(tuple(value))
+    return values
+
+
+def _channel_is_simple(action, data_path):
+    """判定某个通道是否「简单」：插值 ∈ {LINEAR/CONSTANT/BEZIER} 且去重值 ≤2。"""
+    for fcurve in action.fcurves:
+        if fcurve.data_path != data_path:
+            continue
+        for keyframe in fcurve.keyframe_points:
+            if keyframe.interpolation not in SIMPLE_INTERPOLATIONS:
+                return False
+    return len(set(_channel_values(action, data_path))) <= 2
+
+
+def _constraint_summary(camera_object):
+    """读相机的约束，按作用通道分类，返回 (位置约束列表, 朝向约束列表)。"""
+    position_constraints = []
+    rotation_constraints = []
+    for constraint in camera_object.constraints:
+        target = constraint.target.name if constraint.target else None
+        entry = {"type": constraint.type, "target": target}
+        if constraint.type == "TRACK_TO":
+            entry["track_axis"] = constraint.track_axis
+            entry["up_axis"] = constraint.up_axis
+        if constraint.type in POSITION_CONSTRAINT_TYPES:
+            position_constraints.append(entry)
+        elif constraint.type in ROTATION_CONSTRAINT_TYPES:
+            rotation_constraints.append(entry)
+    return position_constraints, rotation_constraints
+
+
+def _classify_segment(camera_object, action):
+    """分通道判定一个段，返回 (segment_type, constraint_meta)。
+
+    segment_type：S（简单，可无损重演）/ C（复杂，难重演）。
+    简单 = 无「难重演约束」且插值简单；TRACK_TO 等 lookAt 系约束可前端重演，归入简单。
+    """
+    position_constraints, rotation_constraints = _constraint_summary(camera_object)
+
+    position_complex = (
+        any(entry["type"] in COMPLEX_CONSTRAINT_TYPES for entry in position_constraints)
+        or not _channel_is_simple(action, "location")
+    )
+    rotation_complex = (
+        any(entry["type"] in COMPLEX_CONSTRAINT_TYPES for entry in rotation_constraints)
+        or not _channel_is_simple(action, "rotation_euler")
+    )
+
+    segment_type = "C" if (position_complex or rotation_complex) else "S"
+
+    constraint_meta = {}
+    if position_constraints:
+        constraint_meta["position"] = position_constraints
+    if rotation_constraints:
+        constraint_meta["rotation"] = rotation_constraints
+    return segment_type, constraint_meta
+
+
+def _build_segment(camera_object, action, segment_name, start_frame, end_frame, frames_per_second):
+    """构造一个段的 sidecar 数据。"""
+    keyframe_times = _action_keyframe_times(action)
+    if not keyframe_times:
+        return None
+    start_pose = _action_pose_at(action, keyframe_times[0])
+    end_pose = _action_pose_at(action, keyframe_times[-1])
+    segment_type, constraint_meta = _classify_segment(camera_object, action)
+    segment = {
+        "camera_name": camera_object.name,
+        "segment_name": segment_name,
+        "start_time": round((start_frame - 1) / frames_per_second, 3),
+        "end_time": round(end_frame / frames_per_second, 3),
+        "start_pose": start_pose,
+        "end_pose": end_pose,
+        "segment_type": segment_type,
+    }
+    if constraint_meta:
+        segment["constraint"] = constraint_meta
+    return segment
 
 
 def extract_segments_from_nla():
-    """读相机动画，提取镜头段（相机名 / 绝对起止时间 / S-C / 起终点 pose）。
+    """读相机动画，提取镜头段（相机名 / 绝对起止时间 / 类型 / 约束元数据 / 起终点 pose）。
 
     优先读 NLA strips（约定：一个 track 一个 strip）。
     无 NLA track 但直接挂了 Action 的相机，把 Action 的关键帧范围当成一个段。
-    S（简单）= 去重后 pose 数 ≤ 2；C（复杂）= > 2。
+    类型分通道判定（位置/朝向）：简单=无约束+glTF插值+≤2 pose；复杂=3+ pose/特殊缓动；约束=有约束。
     """
     import bpy
     segments = []
@@ -217,42 +322,26 @@ def extract_segments_from_nla():
             keyframe_times = _action_keyframe_times(action)
             if not keyframe_times:
                 continue
-            pose_count = _count_distinct_poses(action)
-            segment_type = "S" if pose_count <= 2 else "C"
-            start_pose = _action_pose_at(action, keyframe_times[0])
-            end_pose = _action_pose_at(action, keyframe_times[-1])
-            segments.append({
-                "camera_name": camera_object.name,
-                "segment_name": action.name,
-                "start_time": round((keyframe_times[0] - 1) / frames_per_second, 3),
-                "end_time": round(keyframe_times[-1] / frames_per_second, 3),
-                "start_pose": start_pose,
-                "end_pose": end_pose,
-                "segment_type": segment_type,
-            })
+            segment = _build_segment(
+                camera_object, action, action.name,
+                keyframe_times[0], keyframe_times[-1], frames_per_second,
+            )
+            if segment is not None:
+                segments.append(segment)
             continue
 
+        # 有 NLA track：每个 strip 一个段
         for nla_track in animation_data.nla_tracks:
             for strip in nla_track.strips:
                 action = strip.action
                 if action is None:
                     continue
-                pose_count = _count_distinct_poses(action)
-                segment_type = "S" if pose_count <= 2 else "C"
-                keyframe_times = _action_keyframe_times(action)
-                if not keyframe_times:
-                    continue
-                start_pose = _action_pose_at(action, keyframe_times[0])
-                end_pose = _action_pose_at(action, keyframe_times[-1])
-                segments.append({
-                    "camera_name": camera_object.name,
-                    "segment_name": strip.name,
-                    "start_time": round((strip.frame_start - 1) / frames_per_second, 3),
-                    "end_time": round(strip.frame_end / frames_per_second, 3),
-                    "start_pose": start_pose,
-                    "end_pose": end_pose,
-                    "segment_type": segment_type,
-                })
+                segment = _build_segment(
+                    camera_object, action, strip.name,
+                    strip.frame_start, strip.frame_end, frames_per_second,
+                )
+                if segment is not None:
+                    segments.append(segment)
     return segments
 
 

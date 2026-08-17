@@ -50,11 +50,16 @@
 ```
 ShotSegment {
   camera_name: string,      // 引用的相机对象名
+  segment_name: string,     // 段名
   start_time: number,       // 秒
   end_time: number,         // 秒
   start_pose: { position: [x,y,z], quaternion: [x,y,z,w] },
   end_pose:   { position: [x,y,z], quaternion: [x,y,z,w] },
-  segment_type: "S" | "C",  // S=简单(可编辑) / C=复杂(自由)
+  segment_type: "S" | "C",  // S=简单(可重演/可编辑) / C=复杂
+  constraint?: {            // 约束元数据（有约束才填）
+    position?: { type, target }[],
+    rotation?: { type, target, track_axis?, up_axis? }[],
+  },
 }
 ```
 
@@ -64,7 +69,7 @@ ShotMetadata 增加 `segments: ShotSegment[]` 字段。段的时间位置（首�
 
 **阶段 1 — Blender 脚本（export_shot.py 扩展）读 NLA strips：**
 - 遍历相机的 NLA tracks（每段一个 track）→ 提取每段：相机名、绝对起止时间（strip frame_start/end）、action 名
-- 分析每个 action 的关键帧 pose 数：去重后 ≤2 → S，>2 → C
+- 分通道判定 S/C（位置/朝向各自判：约束 + 插值 + 去重值，见下方 S/C 判定）
 - 写入 `segments.json` sidecar（含绝对时间 + S/C）
 
 **阶段 2 — 后端读 sidecar 组装：**
@@ -74,7 +79,16 @@ ShotMetadata 增加 `segments: ShotSegment[]` 字段。段的时间位置（首�
 
 **为何要 sidecar（关键验证结论）**：glTF 导出会丢失 NLA strip 的绝对时间偏移（只保留 action 的相对时长），所以「段在时间轴上的绝对位置」必须由 Blender 脚本在导出时从 NLA strips 读出并写进 sidecar，不能靠读 glTF 还原。
 
-**S/C 判据的准确表述**：S（简单）= 恰好能用「2 个 pose + LINEAR/CUBICSPLINE 缓动」无损表达；C（复杂）= 做不到这点的（多关键帧 / Back·Bounce·Elastic 特殊缓动 / Follow Path·Track To 等约束 / 复杂贝塞尔曲线）。由于 glTF 仅支持 LINEAR/STEP/CUBICSPLINE，特殊缓动和约束导出时会被采样/烘焙成密集关键帧，所以**凡是 C，导出到 glTF 后必然表现为「去重后 pose 数 > 2」**——用 pose 数判断不会漏。
+**S/C 判定（分通道，最终定稿）**：每个段拆「位置轨迹」和「朝向轨迹」两条独立通道，各自判定再组合。
+
+每条通道判「简单」需同时满足：
+1. **无难重演约束**：TRACK_TO / LOCKED_TRACK / DAMPED_TRACK（lookAt 系）和 COPY_LOCATION / COPY_ROTATION（复制系）是确定性函数、可前端无损重演 → 算简单；FOLLOW_PATH / LIMIT_LOCATION / LIMIT_ROTATION（路径/限制系）难重演 → 算复杂。
+2. **插值 glTF 可承载**：LINEAR / CONSTANT / BEZIER（= glTF 的 LINEAR / STEP / CUBICSPLINE）→ 简单；BACK / BOUNCE / ELASTIC 等特殊缓动 → 复杂。
+3. **去重值 ≤2**：2 pose（直线/静止）→ 简单；3+ pose（折线）→ 复杂。
+
+组合：**位置简单 且 朝向简单 → S；任一复杂 → C。**
+
+关键背景：glTF 2.0 core 没有约束语义（只有节点 transform + 动画采样 LINEAR/STEP/CUBICSPLINE）。但 TRACK_TO 的朝向 = `lookAt(相机位置, 目标位置)`，是确定性函数，且 glTF 已把 target 对象导出成空节点——前端按约束元数据里的 target 名字找到节点、用 lookAt 无损重演朝向。所以 TRACK_TO 归入「简单」（编辑 = 改 target 位置），不是「复杂」。FOLLOW_PATH 因要复刻整条曲线，仍归复杂。约束元数据（target / track_axis / up_axis）始终写进 sidecar，供前端重演 + V5 编辑。
 
 ### 生成端 skill 约定（强约束）
 
@@ -115,7 +129,7 @@ ShotMetadata 增加 `segments: ShotSegment[]` 字段。段的时间位置（首�
 
 ## Further Notes
 
-- 术语见 CONTEXT.md（Shot Segment / Pose / S-C / Sequence / Parallel / Hold / Easing）
+- 术语见 CONTEXT.md（Shot Segment / Pose / S-C / Constraint / Hold / Easing）
 - 现有 `Shot`（完整场景）与 `Shot Segment`（镜头段）是两个不同概念，命名上注意区分
 - 段的「起终点 pose」用 quaternion 存储（与 glTF 节点变换一致）
 - 相机切换为纯手动：加载后默认第一个相机，用户下拉框选段才切；时间轴始终全局（最长内容总时长）

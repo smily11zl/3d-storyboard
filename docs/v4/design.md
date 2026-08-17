@@ -21,11 +21,25 @@ blend 上传
 ```typescript
 interface ShotSegment {
   camera_name: string;          // 引用的相机对象名
+  segment_name: string;         // 段名（action 名或 strip 名）
   start_time: number;           // 秒（绝对）
   end_time: number;             // 秒（绝对）
   start_pose: Pose;             // 起点姿态
   end_pose: Pose;               // 终点姿态
-  segment_type: "S" | "C";      // S=简单(可编辑) / C=复杂(自由)
+  segment_type: "S" | "C";      // S=简单(可重演/可编辑) / C=复杂
+  constraint?: SegmentConstraint; // 约束元数据（有约束才填）
+}
+
+interface SegmentConstraint {
+  position?: ConstraintEntry[]; // 位置约束（FOLLOW_PATH 等）
+  rotation?: ConstraintEntry[]; // 朝向约束（TRACK_TO 等）
+}
+
+interface ConstraintEntry {
+  type: string;                 // 约束类型（TRACK_TO / FOLLOW_PATH …）
+  target: string | null;        // 目标对象名
+  track_axis?: string;          // TRACK_TO 专用
+  up_axis?: string;             // TRACK_TO 专用
 }
 
 interface Pose {
@@ -44,11 +58,15 @@ interface Pose {
   "segments": [
     {
       "camera_name": "cam_01",
+      "segment_name": "seg_01",
       "start_time": 0.0,
       "end_time": 3.0,
       "start_pose": { "position": [0,0,5], "quaternion": [0,0,0,1] },
       "end_pose":   { "position": [0,0,2], "quaternion": [0,0,0,1] },
-      "segment_type": "S"
+      "segment_type": "S",
+      "constraint": {
+        "rotation": [{ "type": "TRACK_TO", "target": "LookTarget", "track_axis": "TRACK_NEGATIVE_Z", "up_axis": "UP_Y" }]
+      }
     }
   ]
 }
@@ -57,12 +75,24 @@ interface Pose {
 ## 4. 识别逻辑（两段式）
 
 **阶段 1 — Blender 脚本（export_shot.py 扩展）：**
-- 遍历相机的 NLA tracks（每段一个 track）→ 提取相机名 + strip frame_start/end（绝对时间）
-- 读每个段 action 的关键帧 → 去重 pose 数 → S（≤2）/ C（>2）
-- 写 segments.json
+- 段识别：遍历相机的 NLA tracks（每段一个 track）→ 提取相机名 + strip frame_start/end（绝对时间）；无 NLA track 但直接挂 Action 的相机，把 Action 关键帧范围当一个段（旧项目兼容）
+- 类型判定：分通道（位置/朝向）判定 S/C，见 4.1
+- 写 segments.json（含 segment_type + 约束元数据）
 
 **阶段 2 — 后端 `parse_segments_sidecar(sidecar_json)`：**
 - 读 segments.json → 组装 ShotSegment[]（按 start_time 排序）
+
+### 4.1 S/C 判定（分通道）
+
+每个段拆成「位置轨迹」和「朝向轨迹」两条独立通道，各自判定再组合。每条通道判「简单」需同时满足：
+
+1. **无难重演约束**：TRACK_TO / LOCKED_TRACK / DAMPED_TRACK（lookAt 系）与 COPY_LOCATION / COPY_ROTATION（复制系）是确定性函数、可前端无损重演 → 不算复杂；FOLLOW_PATH / LIMIT_LOCATION / LIMIT_ROTATION（路径/限制系）难重演 → 复杂
+2. **插值 glTF 可承载**：LINEAR / CONSTANT / BEZIER（= glTF 的 LINEAR / STEP / CUBICSPLINE）→ 简单；BACK / BOUNCE / ELASTIC 等特殊缓动 → 复杂
+3. **去重值 ≤2**：2 pose（直线/静止）→ 简单；3+ pose（折线）→ 复杂
+
+组合：**位置简单 且 朝向简单 → S；任一复杂 → C。**
+
+约束元数据（TRACK_TO 的 target / track_axis / up_axis）始终写进 sidecar，供前端 lookAt 重演 + V5 编辑分流。
 
 ## 5. API 变更
 
