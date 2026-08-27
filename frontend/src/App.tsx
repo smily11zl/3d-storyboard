@@ -1,11 +1,16 @@
 import { useEffect, useState, useMemo } from 'react';
+import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import type { Pose } from './types';
 import { UploadZone } from './components/UploadZone';
 import { CameraView } from './components/CameraView';
 import { FreeView } from './components/FreeView';
 import { Timeline } from './components/Timeline';
 import { TopBar } from './components/TopBar';
+import { EditToolbar } from './components/EditToolbar';
+import { EditTimeline } from './components/EditTimeline';
+import { SegmentSidebar } from './components/SegmentSidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { SettingsModal } from './components/SettingsModal';
 import { useStore } from './store';
@@ -23,7 +28,57 @@ function computeAnimationStartTime(gltf: GLTF): number {
       }
     }
   }
-  return minimumTime === Infinity ? 0 : minimumTime;
+  return Number.isFinite(minimumTime) ? minimumTime : 0;
+}
+
+/** 从 glTF clips 预计算每段首尾 pose（glTF Y-up 坐标），作为编辑态的编辑载体。 */
+function extractSegmentPoses(
+  gltf: GLTF,
+): Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>> {
+  const poses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>> = {};
+  for (const clip of gltf.animations) {
+    const positionTrack = clip.tracks.find((track) => track.name.endsWith('.position'));
+    const quaternionTrack = clip.tracks.find((track) => track.name.endsWith('.quaternion'));
+    if (!positionTrack || !quaternionTrack) continue;
+    const nodeName = positionTrack.name.slice(0, -'.position'.length);
+    const startPosition: [number, number, number] = [
+      positionTrack.values[0],
+      positionTrack.values[1],
+      positionTrack.values[2],
+    ];
+    const endPositionIndex = positionTrack.values.length - 3;
+    const endPosition: [number, number, number] = [
+      positionTrack.values[endPositionIndex],
+      positionTrack.values[endPositionIndex + 1],
+      positionTrack.values[endPositionIndex + 2],
+    ];
+    const startQuaternion = new THREE.Quaternion(
+      quaternionTrack.values[0],
+      quaternionTrack.values[1],
+      quaternionTrack.values[2],
+      quaternionTrack.values[3],
+    );
+    const endQuaternionIndex = quaternionTrack.values.length - 4;
+    const endQuaternion = new THREE.Quaternion(
+      quaternionTrack.values[endQuaternionIndex],
+      quaternionTrack.values[endQuaternionIndex + 1],
+      quaternionTrack.values[endQuaternionIndex + 2],
+      quaternionTrack.values[endQuaternionIndex + 3],
+    );
+    const startEuler = new THREE.Euler().setFromQuaternion(startQuaternion);
+    const endEuler = new THREE.Euler().setFromQuaternion(endQuaternion);
+    (poses[nodeName] ??= {})[clip.name] = {
+      start_pose: {
+        position: startPosition,
+        rotation: [startEuler.x, startEuler.y, startEuler.z],
+      },
+      end_pose: {
+        position: endPosition,
+        rotation: [endEuler.x, endEuler.y, endEuler.z],
+      },
+    };
+  }
+  return poses;
 }
 
 function cloneGLTF(source: GLTF): GLTF {
@@ -45,6 +100,7 @@ function App() {
   const shot = useStore((state) => state.shot);
   const isLoading = useStore((state) => state.isLoading);
   const sidebarCollapsed = useStore((state) => state.sidebarCollapsed);
+  const editMode = useStore((state) => state.editMode);
   const [gltfOriginal, setGltfOriginal] = useState<GLTF | null>(null);
   const [sceneLoading, setSceneLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -73,9 +129,20 @@ function App() {
         // Store the earliest animation keyframe time so the viewer can
         // start at frame 1 (pose) instead of time 0 (T-pose bind)
         const startTime = computeAnimationStartTime(loadedData);
+        // 预读取所有节点位置（target Empty 用于 TRACK_TO 目标点编辑）
+        const targetNodePositions: Record<string, [number, number, number]> = {};
+        loadedData.scene.traverse((node) => {
+          if (node.name) {
+            const worldPosition = new THREE.Vector3();
+            node.getWorldPosition(worldPosition);
+            targetNodePositions[node.name] = [worldPosition.x, worldPosition.y, worldPosition.z];
+          }
+        });
         useStore.setState({
           animationStartTime: startTime,
           currentTime: startTime,
+          targetNodePositions,
+          gltfSegmentPoses: extractSegmentPoses(loadedData),
         });
         setGltfOriginal(loadedData);
         setSceneLoading(false);
@@ -87,6 +154,14 @@ function App() {
       },
     );
   }, [shot?.gltf_output_url]);
+
+  // 加载 blend 版本列表（版本切换由用户在聊天框下拉手动选择，不自动跳到最新）
+  useEffect(() => {
+    const exportHash = shot?.export_hash;
+    if (!exportHash) return;
+    const { loadBlendVersions } = useStore.getState();
+    void loadBlendVersions(exportHash);
+  }, [shot?.export_hash]);
 
   // Clone separate scene copies for each Canvas (Three.js objects can only have one parent)
   const gltfForCamera = useMemo(
@@ -103,27 +178,36 @@ function App() {
 
   return (
     <div className={styles.appContainer}>
-      <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+      {editMode ? (
+        <EditToolbar />
+      ) : (
+        <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+      )}
       <div className={styles.mainArea}>
         {/* Keep ChatPanel mounted (CSS-hidden when collapsed) so the chat
             history survives toggling the sidebar */}
-        <div className={sidebarCollapsed ? styles.hidden : undefined}>
-          <ChatPanel />
-        </div>
+        {!editMode && (
+          <div className={sidebarCollapsed ? styles.hidden : undefined}>
+            <ChatPanel />
+          </div>
+        )}
         <div className={styles.contentArea}>
-          <UploadZone />
+          {!editMode && <UploadZone />}
           {hasContent && !gltfOriginal && (
             <div className={styles.loadingOverlay}>
               <span>{sceneLoading ? 'Loading 3D scene...' : 'Converting...'}</span>
             </div>
           )}
-          {showViewports && (
-            <div className={styles.viewportArea}>
-              <CameraView gltfData={gltfForCamera} />
-              <FreeView gltfData={gltfForFree} />
-            </div>
-          )}
-          <Timeline />
+          <div className={styles.editBody}>
+            {showViewports && (
+              <div className={styles.viewportArea}>
+                <CameraView gltfData={gltfForCamera} />
+                <FreeView gltfData={gltfForFree} />
+              </div>
+            )}
+            {editMode && <SegmentSidebar />}
+          </div>
+          {editMode ? <EditTimeline /> : <Timeline />}
         </div>
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}

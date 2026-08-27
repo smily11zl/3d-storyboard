@@ -80,3 +80,27 @@
 .fileInput {
   display: none;
 }
+
+.rightGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editButton {
+  border-radius: var(--radius-pill-full);
+  padding: 7px 18px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid #1db954;
+  background-color: transparent;
+  color: #1ed760;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.editButton:hover {
+  background-color: #1ed760;
+  color: #000000;
+}

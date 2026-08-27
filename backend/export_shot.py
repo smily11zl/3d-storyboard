@@ -185,7 +185,7 @@ def _action_pose_at(action, time):
 
 
 # glTF 原生支持的插值（Blender 名）：LINEAR / CONSTANT(=STEP) / BEZIER(=CUBICSPLINE)
-SIMPLE_INTERPOLATIONS = {"LINEAR", "CONSTANT", "BEZIER"}
+SIMPLE_INTERPOLATIONS = {"LINEAR", "CONSTANT"}
 
 # 约束按作用通道分类：位置约束 vs 朝向约束
 POSITION_CONSTRAINT_TYPES = {"FOLLOW_PATH", "COPY_LOCATION", "LIMIT_LOCATION"}
@@ -222,7 +222,7 @@ def _channel_values(action, data_path):
 
 
 def _channel_is_simple(action, data_path):
-    """判定某个通道是否「简单」：插值 ∈ {LINEAR/CONSTANT/BEZIER} 且去重值 ≤2。"""
+    """判定某个通道是否「简单」：插值 ∈ {LINEAR/CONSTANT} 且去重值 ≤2。"""
     for fcurve in action.fcurves:
         if fcurve.data_path != data_path:
             continue
@@ -230,6 +230,21 @@ def _channel_is_simple(action, data_path):
             if keyframe.interpolation not in SIMPLE_INTERPOLATIONS:
                 return False
     return len(set(_channel_values(action, data_path))) <= 2
+
+
+def _channel_interpolation(action, data_path):
+    """读某通道的插值方式（简单段：LINEAR/CONSTANT，LINEAR 优先）。"""
+    interpolations = set()
+    for fcurve in action.fcurves:
+        if fcurve.data_path != data_path:
+            continue
+        for keyframe in fcurve.keyframe_points:
+            interpolations.add(keyframe.interpolation)
+    if "LINEAR" in interpolations:
+        return "LINEAR"
+    if "CONSTANT" in interpolations:
+        return "CONSTANT"
+    return sorted(interpolations)[0] if interpolations else "LINEAR"
 
 
 def _constraint_summary(camera_object):
@@ -287,11 +302,17 @@ def _build_segment(camera_object, action, segment_name, start_frame, end_frame, 
     segment = {
         "camera_name": camera_object.name,
         "segment_name": segment_name,
-        "start_time": round((start_frame - 1) / frames_per_second, 3),
+        # 首段 strip 可能从 frame 0（而非约定的 frame 1）开始，导致 (0-1)/fps 为负。
+        # clamp 到 0，让时间轴从 0 开始，使用者视角「第一段从 0 开始」最直觉。
+        "start_time": max(0.0, round((start_frame - 1) / frames_per_second, 3)),
         "end_time": round(end_frame / frames_per_second, 3),
         "start_pose": start_pose,
         "end_pose": end_pose,
         "segment_type": segment_type,
+        "interpolation": {
+            "position": _channel_interpolation(action, "location"),
+            "rotation": _channel_interpolation(action, "rotation_euler"),
+        },
     }
     if constraint_meta:
         segment["constraint"] = constraint_meta

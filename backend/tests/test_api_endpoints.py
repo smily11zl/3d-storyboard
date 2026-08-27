@@ -44,10 +44,13 @@ def temporary_export_root():
 
 
 @pytest_asyncio.fixture
-async def async_client(temporary_export_root):
-    """Async HTTP client pointed at the FastAPI app with a temp exports root."""
+async def async_client(temporary_export_root, monkeypatch, tmp_path):
+    """Async HTTP client pointed at the FastAPI app with temp exports + generate roots."""
     os.environ["EXPORTS_ROOT"] = temporary_export_root
     os.environ["MAX_DISK_MB"] = "500"
+    from backend import generate
+
+    monkeypatch.setattr(generate, "GENERATE_ROOT", tmp_path / "generate")
     # Import after env is set so the app module picks up the right paths
     from backend.main import application
     transport = ASGITransport(app=application)
@@ -187,3 +190,328 @@ async def test_disk_quota_eviction(async_client, fixture_blend_content, temporar
     )
     # Should succeed because eviction clears space
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_ingest_blend_exports_without_blend_and_with_source(monkeypatch, tmp_path, fixture_blend_path):
+    """ingest_blend 只写渲染产物（不保留 blend），且 metadata 记录 source。"""
+    from backend import main as main_module
+
+    monkeypatch.setattr(main_module, "EXPORTS_ROOT", tmp_path / "exports")
+    (tmp_path / "exports").mkdir(parents=True, exist_ok=True)
+
+    metadata = await main_module.ingest_blend(
+        fixture_blend_path,
+        source={"type": "upload", "file": "20260821_131503.blend"},
+    )
+
+    export_dir = tmp_path / "exports" / metadata["export_hash"]
+    assert (export_dir / "scene.gltf").is_file(), "exports 应包含渲染产物 scene.gltf"
+    blends = list(export_dir.glob("*.blend"))
+    assert blends == [], "exports 不应保留任何 blend（源由调用方管理）"
+    assert metadata["source"] == {"type": "upload", "file": "20260821_131503.blend"}
+
+
+@pytest.mark.asyncio
+async def test_export_scene_writes_chat_source(monkeypatch, tmp_path, fixture_blend_path):
+    """export_scene（切换聊天 reload）应把 source 记为 chat + folder。"""
+    from pathlib import Path
+
+    from backend import generate
+    from backend import main as main_module
+
+    monkeypatch.setattr(main_module, "EXPORTS_ROOT", tmp_path / "exports")
+    (tmp_path / "exports").mkdir(parents=True, exist_ok=True)
+
+    async def fake_run_export(blend_path, output_directory):
+        os.makedirs(output_directory, exist_ok=True)
+        with open(os.path.join(output_directory, "scene.gltf"), "w") as file_handle:
+            file_handle.write('{"asset":{"version":"2.0"}}')
+
+    monkeypatch.setattr(main_module, "run_export", fake_run_export)
+    monkeypatch.setattr(
+        main_module,
+        "build_shot_metadata",
+        lambda export_hash, export_directory, gltf: {"export_hash": export_hash},
+    )
+    monkeypatch.setattr(main_module, "save_shot_metadata", lambda export_hash, metadata: None)
+    monkeypatch.setattr(main_module, "enforce_disk_quota", lambda: None)
+
+    folder = tmp_path / "20260817_115113"
+    metadata = await generate.export_scene(Path(fixture_blend_path), folder)
+
+    assert metadata["source"] == {"type": "chat", "folder": "20260817_115113"}
+
+
+def _valid_segment():
+    return {
+        "camera_name": "cam_01",
+        "segment_name": "seg_01",
+        "start_time": 0.0,
+        "end_time": 3.0,
+        "start_pose": {"position": [0, 1, 2], "rotation": [0, 0, 0]},
+        "end_pose": {"position": [2, 1, 2], "rotation": [0, 0, 0]},
+    }
+
+
+def _mock_apply_and_export(monkeypatch, main_module):
+    """mock run_apply_edit（复制输入到输出）+ run_export（生成假 gltf）+ build_shot_metadata。"""
+
+    async def fake_apply_edit(input_blend, operations_file, output_blend):
+        shutil.copy(input_blend, output_blend)
+
+    async def fake_run_export(blend_path, output_directory):
+        os.makedirs(output_directory, exist_ok=True)
+        with open(os.path.join(output_directory, "scene.gltf"), "w") as file_handle:
+            file_handle.write('{"asset":{"version":"2.0"}}')
+
+    monkeypatch.setattr(main_module, "run_apply_edit", fake_apply_edit)
+    monkeypatch.setattr(main_module, "run_export", fake_run_export)
+    monkeypatch.setattr(
+        main_module,
+        "build_shot_metadata",
+        lambda export_hash, export_directory, gltf: {"export_hash": export_hash},
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_shot_chat_source_writes_scene_v2(monkeypatch, tmp_path):
+    """聊天源保存：读 generate/output/<folder>/ 最新 blend，写回 scene_v2.blend，source 不变。"""
+    from backend import generate
+    from backend import main as main_module
+    from backend.main import EditRequest
+
+    exports_root = tmp_path / "exports"
+    exports_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(main_module, "EXPORTS_ROOT", exports_root)
+    monkeypatch.setattr(generate, "GENERATE_ROOT", tmp_path / "generate")
+
+    folder = tmp_path / "generate" / "output" / "20260817_115113"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "scene.blend").write_bytes(b"fake chat blend")
+
+    export_hash = "a" * 64
+    export_dir = exports_root / export_hash
+    export_dir.mkdir(parents=True, exist_ok=True)
+    (export_dir / "shot_metadata.json").write_text(
+        json.dumps(
+            {"export_hash": export_hash, "source": {"type": "chat", "folder": "20260817_115113"}}
+        )
+    )
+
+    _mock_apply_and_export(monkeypatch, main_module)
+
+    result = await main_module.edit_shot(
+        export_hash,
+        EditRequest(segments=[_valid_segment()], target_positions={}),
+    )
+
+    assert (folder / "scene_v2.blend").is_file(), "聊天源保存应写回 scene_v2.blend"
+    assert result["source"] == {"type": "chat", "folder": "20260817_115113"}
+
+
+@pytest.mark.asyncio
+async def test_edit_shot_upload_source_writes_new_upload_output(monkeypatch, tmp_path):
+    """上传源保存：读 upload_output/<file>，输出新的 upload_output/<新时间戳>.blend 并更新 source。"""
+    from backend import generate
+    from backend import main as main_module
+    from backend.main import EditRequest
+
+    exports_root = tmp_path / "exports"
+    exports_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(main_module, "EXPORTS_ROOT", exports_root)
+    monkeypatch.setattr(generate, "GENERATE_ROOT", tmp_path / "generate")
+
+    # 上传源文件：generate/upload_output/<file>.blend
+    upload_root = tmp_path / "generate" / "upload_output"
+    upload_root.mkdir(parents=True, exist_ok=True)
+    source_filename = "20260821_131503_123456.blend"
+    (upload_root / source_filename).write_bytes(b"fake upload blend")
+
+    export_hash = "b" * 64
+    export_dir = exports_root / export_hash
+    export_dir.mkdir(parents=True, exist_ok=True)
+    (export_dir / "shot_metadata.json").write_text(
+        json.dumps(
+            {
+                "export_hash": export_hash,
+                "source": {"type": "upload", "file": source_filename},
+            }
+        )
+    )
+
+    _mock_apply_and_export(monkeypatch, main_module)
+
+    result = await main_module.edit_shot(
+        export_hash,
+        EditRequest(segments=[_valid_segment()], target_positions={}),
+    )
+
+    blends = [p.name for p in upload_root.iterdir() if p.suffix == ".blend"]
+    assert len(blends) == 2, f"上传源保存应在 upload_output 新增一个 blend，现有: {blends}"
+    assert result["source"]["type"] == "upload"
+    assert result["source"]["file"] != source_filename, "保存后 source 应更新为新文件"
+    assert (upload_root / result["source"]["file"]).is_file()
+
+
+@pytest.mark.asyncio
+async def test_list_blends_returns_versions_from_source_folder(monkeypatch, tmp_path):
+    """list_blends 从源目录读版本（按 mtime 排序），而非 exports。"""
+    from backend import generate
+    from backend import main as main_module
+
+    exports_root = tmp_path / "exports"
+    exports_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(main_module, "EXPORTS_ROOT", exports_root)
+    monkeypatch.setattr(generate, "GENERATE_ROOT", tmp_path / "generate")
+
+    folder = tmp_path / "generate" / "output" / "20260817_115113"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "scene.blend").write_bytes(b"original")
+    (folder / "scene_v2.blend").write_bytes(b"version two")
+    os.utime(folder / "scene.blend", (1000, 1000))
+    os.utime(folder / "scene_v2.blend", (2000, 2000))
+
+    export_hash = "c" * 64
+    export_dir = exports_root / export_hash
+    export_dir.mkdir(parents=True, exist_ok=True)
+    (export_dir / "shot_metadata.json").write_text(
+        json.dumps(
+            {"export_hash": export_hash, "source": {"type": "chat", "folder": "20260817_115113"}}
+        )
+    )
+
+    result = await main_module.list_blends(export_hash)
+
+    filenames = [blend["filename"] for blend in result["blends"]]
+    assert filenames == ["scene.blend", "scene_v2.blend"], f"应按 mtime 排序，实际 {filenames}"
+    assert result["latest"] == "scene_v2.blend"
+    assert all("blend_hash" in blend for blend in result["blends"])
+
+
+@pytest.mark.asyncio
+async def test_upload_writes_source_to_upload_output(
+    async_client, fixture_blend_content, tmp_path, monkeypatch
+):
+    """上传后：源 blend 落 upload_output（扁平 <时间戳>.blend），source 用 file 字段。"""
+    from backend import main as main_module
+
+    async def fake_run_export(blend_path, output_directory):
+        os.makedirs(output_directory, exist_ok=True)
+        with open(os.path.join(output_directory, "scene.gltf"), "w") as file_handle:
+            file_handle.write('{"asset":{"version":"2.0"}}')
+
+    monkeypatch.setattr(main_module, "run_export", fake_run_export)
+    monkeypatch.setattr(main_module, "EXPORTS_ROOT", tmp_path / "exports")
+    (tmp_path / "exports").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        main_module,
+        "build_shot_metadata",
+        lambda export_hash, export_directory, gltf: {"export_hash": export_hash},
+    )
+
+    response = await async_client.post(
+        "/api/shots",
+        files={"file": ("test.blend", fixture_blend_content, "application/octet-stream")},
+    )
+    assert response.status_code == 200, response.text
+
+    upload_output = tmp_path / "generate" / "upload_output"
+    source_blends = list(upload_output.rglob("*.blend"))
+    assert len(source_blends) == 1, f"上传应写 1 个源 blend 到 upload_output，实际 {source_blends}"
+    source = response.json()["source"]
+    assert source["type"] == "upload"
+    assert source["file"].endswith(".blend")
+
+
+@pytest.mark.asyncio
+async def test_reupload_restores_deleted_source(
+    async_client, fixture_blend_content, tmp_path, monkeypatch
+):
+    """删掉源 blend 后重新上传同一 blend，缓存命中时应补回源文件。"""
+    from backend import main as main_module
+
+    async def fake_run_export(blend_path, output_directory):
+        os.makedirs(output_directory, exist_ok=True)
+        with open(os.path.join(output_directory, "scene.gltf"), "w") as file_handle:
+            file_handle.write('{"asset":{"version":"2.0"}}')
+
+    monkeypatch.setattr(main_module, "run_export", fake_run_export)
+    monkeypatch.setattr(main_module, "EXPORTS_ROOT", tmp_path / "exports")
+    (tmp_path / "exports").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        main_module,
+        "build_shot_metadata",
+        lambda export_hash, export_directory, gltf: {"export_hash": export_hash},
+    )
+
+    files = {"file": ("test.blend", fixture_blend_content, "application/octet-stream")}
+
+    first_response = await async_client.post("/api/shots", files=files)
+    assert first_response.status_code == 200
+    first_metadata = first_response.json()
+    source_blend = (
+        tmp_path / "generate" / "upload_output" / first_metadata["source"]["file"]
+    )
+
+    # 手动删除源 blend
+    source_blend.unlink()
+    assert not source_blend.exists(), "前置：源 blend 应已删除"
+
+    # 重新上传同一 blend（缓存命中）
+    second_response = await async_client.post("/api/shots", files=files)
+    assert second_response.status_code == 200
+
+    assert source_blend.is_file(), "重新上传应补回被删的源 blend"
+
+
+@pytest.mark.asyncio
+async def test_reupload_restores_source_when_metadata_has_legacy_folder_field(
+    async_client, fixture_blend_content, tmp_path, monkeypatch
+):
+    """旧 metadata source 用 folder 字段（非 file）时，重传应重建 upload 源为 file 字段。"""
+    from backend import main as main_module
+
+    async def fake_run_export(blend_path, output_directory):
+        os.makedirs(output_directory, exist_ok=True)
+        with open(os.path.join(output_directory, "scene.gltf"), "w") as file_handle:
+            file_handle.write('{"asset":{"version":"2.0"}}')
+
+    monkeypatch.setattr(main_module, "run_export", fake_run_export)
+    monkeypatch.setattr(main_module, "EXPORTS_ROOT", tmp_path / "exports")
+    (tmp_path / "exports").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        main_module,
+        "build_shot_metadata",
+        lambda export_hash, export_directory, gltf: {"export_hash": export_hash},
+    )
+
+    files = {"file": ("test.blend", fixture_blend_content, "application/octet-stream")}
+
+    first_response = await async_client.post("/api/shots", files=files)
+    assert first_response.status_code == 200
+    first_metadata = first_response.json()
+    export_hash = first_metadata["export_hash"]
+    old_source_blend = (
+        tmp_path / "generate" / "upload_output" / first_metadata["source"]["file"]
+    )
+
+    # 删除源 blend + 把 metadata 的 source 改成旧字段 folder（模拟历史数据）
+    old_source_blend.unlink()
+    metadata = main_module.load_shot_metadata(export_hash)
+    assert metadata is not None, "前置：首次上传应写入 metadata"
+    metadata["source"] = {"type": "upload", "folder": "20260821_000000_000000"}
+    main_module.save_shot_metadata(export_hash, metadata)
+
+    # 重新上传同一 blend（缓存命中，旧字段 folder 无法定位源）
+    second_response = await async_client.post("/api/shots", files=files)
+    assert second_response.status_code == 200
+    second_metadata = second_response.json()
+
+    # 源应被重建为新字段 file
+    assert second_metadata["source"]["type"] == "upload"
+    assert "file" in second_metadata["source"]
+    new_source_blend = (
+        tmp_path / "generate" / "upload_output" / second_metadata["source"]["file"]
+    )
+    assert new_source_blend.is_file(), "旧字段 folder metadata 重传应重建 upload 源"

@@ -125,9 +125,13 @@ export function CameraIndicator({ gltfData }: CameraIndicatorProperties) {
       cameraNode.updateWorldMatrix(true, false);
       helperCamera.matrixWorld.copy(cameraNode.matrixWorld);
 
-      // 生效/未生效（颜色）：有段看段覆盖，无段看该相机是否有动画。
+      // 生效/未生效（颜色）：编辑态看编辑副本，查看态看原始段。
       const cameraName = cameraNode.name;
-      const isActive = isCameraActive(store.shot, cameraName, currentTime);
+      const segments =
+        store.editMode && store.editingSegments
+          ? store.editingSegments
+          : store.shot?.segments ?? [];
+      const isActive = isCameraActive(segments, cameraName, currentTime);
       const color = isActive ? ACTIVE_COLOR : INACTIVE_COLOR;
       bodyMaterial.color.set(color);
       frustumMaterial.color.set(color);

@@ -26,6 +26,28 @@
   color: var(--color-text-primary);
 }
 
+.blendBar {
+  display: flex;
+  padding: 8px 12px;
+  border-bottom: 1px solid #2e2e2e;
+}
+
+.blendSelect {
+  flex: 1;
+  background-color: #121212;
+  border: 1px solid #3d3d3d;
+  border-radius: 6px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+  outline: none;
+}
+
+.blendSelect:hover {
+  border-color: #4a4a4a;
+}
+
 .messageList {
   flex: 1;
   overflow-y: auto;

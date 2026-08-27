@@ -86,3 +86,20 @@ def test_parse_segments_sorted_by_start_time():
     assert [segment["start_time"] for segment in result["segments"]] == [0.0, 3.0]
     assert result["segments"][0]["camera_name"] == "cam_01"
     assert result["segments"][1]["camera_name"] == "cam_02"
+
+
+def test_interpolation_passthrough():
+    """段带 interpolation 字段时透传。"""
+    sidecar = {
+        "segments": [
+            {
+                "camera_name": "cam_01",
+                "start_time": 0.0,
+                "end_time": 3.0,
+                "segment_type": "S",
+                "interpolation": {"position": "LINEAR", "rotation": "CONSTANT"},
+            }
+        ]
+    }
+    result = parse_segments_sidecar(sidecar)
+    assert result["segments"][0]["interpolation"] == {"position": "LINEAR", "rotation": "CONSTANT"}

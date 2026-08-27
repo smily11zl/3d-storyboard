@@ -1,0 +1,259 @@
+.sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: #181818;
+  border-left: 1px solid #4d4d4d;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #4d4d4d;
+}
+
+.title {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.closeButton {
+  background: none;
+  border: none;
+  color: #b3b3b3;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.closeButton:hover {
+  color: #ffffff;
+}
+
+.body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cameraName {
+  color: #b3b3b3;
+  font-size: 12px;
+}
+
+.typeBadge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.typeSimple {
+  background: #539df5;
+  color: #121212;
+}
+
+.typeComplex {
+  background: #ffa42b;
+  color: #121212;
+}
+
+.timeRow {
+  display: flex;
+  justify-content: space-between;
+  color: #b3b3b3;
+  font-size: 12px;
+}
+
+.editArea {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.poseSection {
+  padding: 12px;
+  background: #1f1f1f;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.frameButton {
+  border-radius: 9999px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid #4a4a4a;
+  background: #252525;
+  color: #e8e8e8;
+  align-self: flex-start;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+}
+
+.frameButton:hover {
+  color: #ffffff;
+  background: #333333;
+}
+
+.poseFields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fieldLabel {
+  color: #7c7c7c;
+  font-size: 11px;
+  font-weight: 700;
+  width: 18px;
+}
+
+.fieldInput {
+  width: 56px;
+  background: #121212;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.fieldInput:focus {
+  outline: 1px solid #539df5;
+  border-color: #539df5;
+}
+
+.complexNotice {
+  padding: 12px;
+  background: #1f1f1f;
+  border-radius: 6px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: #1f1f1f;
+  border-radius: 6px;
+}
+
+.sectionTitle {
+  color: #e8e8e8;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+}
+
+.interpolationRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.interpolationLabel {
+  color: #b3b3b3;
+  font-size: 12px;
+}
+
+.interpolationSelect {
+  background: #121212;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.poseRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.poseRowLabel {
+  color: #b3b3b3;
+  font-size: 11px;
+  font-weight: 700;
+  width: 36px;
+  flex-shrink: 0;
+}
+
+.modeToggle {
+  display: flex;
+  gap: 6px;
+}
+
+.modeToggleButton {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid #4a4a4a;
+  background: #252525;
+  color: #b3b3b3;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+}
+
+.modeToggleButton:hover {
+  color: #ffffff;
+}
+
+.modeToggleActive {
+  background: #539df5;
+  border-color: #539df5;
+  color: #121212;
+}
+
+.complexNoticeText {
+  color: #ffa42b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.deleteButton {
+  border-radius: 9999px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid #f3727f;
+  background: transparent;
+  color: #f3727f;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  margin-top: auto;
+}
+
+.deleteButton:hover {
+  background: #f3727f;
+  color: #121212;
+}

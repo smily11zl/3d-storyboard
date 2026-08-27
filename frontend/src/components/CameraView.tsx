@@ -15,6 +15,7 @@ interface CameraViewProperties {
 export function CameraView({ gltfData }: CameraViewProperties) {
   const shot = useStore((state) => state.shot);
   const activeCameraName = useStore((state) => state.activeCameraName);
+  const editMode = useStore((state) => state.editMode);
   const cameras = shot?.cameras ?? [];
 
   if (!shot) return null;
@@ -23,13 +24,14 @@ export function CameraView({ gltfData }: CameraViewProperties) {
     <div className={styles.panel}>
       <div className={styles.header}>
         <span className={styles.label}>Camera View</span>
-        {cameras.length > 0 ? (
-          <SegmentList />
-        ) : (
-          <select className={styles.cameraSelect} value="" disabled>
-            <option value="">Default View</option>
-          </select>
-        )}
+        {!editMode &&
+          (cameras.length > 0 ? (
+            <SegmentList />
+          ) : (
+            <select className={styles.cameraSelect} value="" disabled>
+              <option value="">Default View</option>
+            </select>
+          ))}
       </div>
       <div className={styles.canvasContainer}>
         <Canvas

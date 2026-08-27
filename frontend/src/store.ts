@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { SessionSummary, ShotMetadata } from './types';
+import type { SessionSummary, ShotMetadata, ShotSegment, BlendVersion, Pose } from './types';
 
 interface StoreState {
   shot: ShotMetadata | null;
@@ -23,6 +23,52 @@ interface StoreState {
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
 
+  /** V5 edit-mode state — entered via the top-bar Edit button. */
+  editMode: boolean;
+  /** Whether the current edit has unsaved changes (drives the Save button). */
+  dirty: boolean;
+  setEditMode: (editing: boolean) => void;
+  setDirty: (dirty: boolean) => void;
+
+  /** The currently selected segment in edit mode (by camera + segment name). */
+  selectedSegment: { camera_name: string; segment_name: string } | null;
+  setSelectedSegment: (segment: { camera_name: string; segment_name: string } | null) => void;
+
+  /** 编辑态的段副本（进入编辑时深拷贝 shot.segments，编辑直接改副本，保存写回，放弃丢弃）。 */
+  editingSegments: ShotSegment[] | null;
+  /** 从 glTF clips 预计算的每段 pose（glTF Y-up 坐标），编辑态用它做编辑载体。 */
+  gltfSegmentPoses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>>;
+  setGltfSegmentPoses: (
+    poses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>>,
+  ) => void;
+  saveEdit: () => Promise<void>;
+
+  /** blend 版本列表（当前 shot 目录下的 .blend）。 */
+  blendVersions: BlendVersion[];
+  loadBlendVersions: (exportHash: string) => Promise<void>;
+  switchBlend: (blendHash: string) => Promise<void>;
+
+  setSegmentPose: (
+    key: string,
+    which: 'start' | 'end',
+    position: [number, number, number],
+    rotation: [number, number, number],
+  ) => void;
+  setSegmentTarget: (key: string, targetPosition: [number, number, number]) => void;
+  setOrientationMode: (key: string, mode: 'interpolate' | 'follow') => void;
+  setInterpolation: (key: string, channel: 'position' | 'rotation', value: string) => void;
+
+  /** Add a segment at the end of a camera track (default still 3s). */
+  addSegment: (cameraName: string) => void;
+  /** Remove a segment (leaves a gap — no reflow). */
+  deleteSegment: (cameraName: string, segmentName: string) => void;
+  /** Change a segment's end time (duration). */
+  setSegmentDuration: (cameraName: string, segmentName: string, endTime: number) => void;
+
+  /** glTF node positions by name (for resolving TRACK_TO target positions). */
+  targetNodePositions: Record<string, [number, number, number]>;
+  setTargetNodePositions: (positions: Record<string, [number, number, number]>) => void;
+
   /** Character (armature root) transforms set by the Free View gizmo.
    *  Keyed by node name; both viewports apply them every frame so the
    *  Camera View reflects character moves made in the Free View. */
@@ -44,7 +90,21 @@ interface StoreState {
   reset: () => void;
 }
 
-export const useStore = create<StoreState>((set) => ({
+function buildEditingSegments(
+  segments: ShotSegment[],
+  gltfSegmentPoses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>>,
+): ShotSegment[] {
+  return segments.map((segment) => {
+    const pose = gltfSegmentPoses[segment.camera_name]?.[segment.segment_name];
+    return {
+      ...segment,
+      start_pose: pose?.start_pose ?? segment.start_pose,
+      end_pose: pose?.end_pose ?? segment.end_pose,
+    };
+  });
+}
+
+export const useStore = create<StoreState>((set, get) => ({
   shot: null,
   isLoading: false,
   errorMessage: null,
@@ -58,6 +118,13 @@ export const useStore = create<StoreState>((set) => ({
   sessionList: [],
   newChatToken: 0,
   sidebarCollapsed: false,
+  editMode: false,
+  dirty: false,
+  selectedSegment: null,
+  editingSegments: null,
+  gltfSegmentPoses: {},
+  blendVersions: [],
+  targetNodePositions: {},
   characterTransforms: {},
 
   uploadFile: async (file: File, force: boolean = false) => {
@@ -89,6 +156,7 @@ export const useStore = create<StoreState>((set) => ({
         framesPerSecond: metadata.frames_per_second,
         currentTime: 0,
         isPlaying: false,
+        blendVersions: [],
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -102,6 +170,192 @@ export const useStore = create<StoreState>((set) => ({
   requestNewChat: () =>
     set((state) => ({ newChatToken: state.newChatToken + 1, currentSessionId: null })),
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+  setEditMode: (editing) =>
+    set((state) => ({
+      editMode: editing,
+      dirty: false,
+      selectedSegment: null,
+      editingSegments: editing
+        ? buildEditingSegments(state.shot?.segments ?? [], state.gltfSegmentPoses)
+        : null,
+    })),
+  setGltfSegmentPoses: (poses) => set({ gltfSegmentPoses: poses }),
+  setDirty: (dirty) => set({ dirty: dirty }),
+  saveEdit: async () => {
+    const state = get();
+    const shot = state.shot;
+    if (!shot || !state.editingSegments) return;
+    const response = await fetch(`/api/shots/${shot.export_hash}/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        segments: state.editingSegments,
+        target_positions: state.targetNodePositions,
+      }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      set({ errorMessage: error?.detail ?? 'Edit save failed' });
+      return;
+    }
+    const newMetadata = await response.json();
+    set({
+      shot: newMetadata,
+      dirty: false,
+      editMode: false,
+      selectedSegment: null,
+      editingSegments: null,
+      blendVersions: [],
+      durationSeconds: newMetadata.duration_seconds,
+      framesPerSecond: newMetadata.frames_per_second,
+    });
+  },
+  loadBlendVersions: async (exportHash) => {
+    const response = await fetch(`/api/shots/${exportHash}/blends`);
+    if (!response.ok) {
+      set({ blendVersions: [] });
+      return;
+    }
+    const data = await response.json();
+    set({ blendVersions: data.blends ?? [] });
+  },
+  switchBlend: async (blendHash) => {
+    const response = await fetch(`/api/shots/${blendHash}`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      set({ errorMessage: error?.detail ?? 'Blend load failed' });
+      return;
+    }
+    const metadata = await response.json();
+    set({
+      shot: metadata,
+      activeCameraName: metadata.cameras.length > 0 ? metadata.cameras[0].camera_name : null,
+      durationSeconds: metadata.duration_seconds,
+      framesPerSecond: metadata.frames_per_second,
+    });
+  },
+  setSelectedSegment: (segment) => set({ selectedSegment: segment }),
+  setSegmentPose: (key, which, position, rotation) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      const [cameraName, segmentName] = key.split(':');
+      return {
+        dirty: true,
+        editingSegments: state.editingSegments.map((segment) =>
+          segment.camera_name === cameraName && segment.segment_name === segmentName
+            ? {
+                ...segment,
+                ...(which === 'start'
+                  ? { start_pose: { position, rotation } }
+                  : { end_pose: { position, rotation } }),
+              }
+            : segment,
+        ),
+      };
+    }),
+  setSegmentTarget: (key, targetPosition) =>
+    set((state) => {
+      const [cameraName, segmentName] = key.split(':');
+      const segment = (state.editingSegments ?? []).find(
+        (candidate) => candidate.camera_name === cameraName && candidate.segment_name === segmentName,
+      );
+      const targetName = segment?.constraint?.rotation?.[0]?.target;
+      if (!targetName) return { dirty: true };
+      return {
+        dirty: true,
+        targetNodePositions: { ...state.targetNodePositions, [targetName]: targetPosition },
+      };
+    }),
+  setOrientationMode: (key, mode) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      const [cameraName, segmentName] = key.split(':');
+      return {
+        dirty: true,
+        editingSegments: state.editingSegments.map((segment) =>
+          segment.camera_name === cameraName && segment.segment_name === segmentName
+            ? { ...segment, orientation_mode: mode }
+            : segment,
+        ),
+      };
+    }),
+  setInterpolation: (key, channel, value) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      const [cameraName, segmentName] = key.split(':');
+      return {
+        dirty: true,
+        editingSegments: state.editingSegments.map((segment) =>
+          segment.camera_name === cameraName && segment.segment_name === segmentName
+            ? {
+                ...segment,
+                interpolation: {
+                  position: segment.interpolation?.position ?? 'LINEAR',
+                  rotation: segment.interpolation?.rotation ?? 'LINEAR',
+                  [channel]: value,
+                },
+              }
+            : segment,
+        ),
+      };
+    }),
+  setTargetNodePositions: (positions) => set({ targetNodePositions: positions }),
+  addSegment: (cameraName) =>
+    set((state) => {
+      const segments = state.editingSegments;
+      if (!segments) return {};
+      const cameraSegments = segments.filter((segment) => segment.camera_name === cameraName);
+      const lastEnd =
+        cameraSegments.length > 0 ? Math.max(...cameraSegments.map((s) => s.end_time)) : 0;
+      const lastSegment =
+        cameraSegments.length > 0
+          ? cameraSegments.reduce((a, b) => (a.end_time >= b.end_time ? a : b))
+          : null;
+      const endPose = lastSegment?.end_pose ?? { position: [0, 0, 0], rotation: [0, 0, 0] };
+      const segmentName = `${cameraName}_seg_${cameraSegments.length + 1}`;
+      const newSegment: ShotSegment = {
+        camera_name: cameraName,
+        segment_name: segmentName,
+        start_time: lastEnd,
+        end_time: lastEnd + 3,
+        start_pose: { position: [...endPose.position], rotation: [...endPose.rotation] },
+        end_pose: { position: [...endPose.position], rotation: [...endPose.rotation] },
+        segment_type: 'S',
+        constraint: lastSegment?.constraint,
+      };
+      return {
+        dirty: true,
+        editingSegments: [...segments, newSegment],
+      };
+    }),
+  deleteSegment: (cameraName, segmentName) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      return {
+        dirty: true,
+        selectedSegment:
+          state.selectedSegment?.camera_name === cameraName &&
+          state.selectedSegment?.segment_name === segmentName
+            ? null
+            : state.selectedSegment,
+        editingSegments: state.editingSegments.filter(
+          (segment) =>
+            !(segment.camera_name === cameraName && segment.segment_name === segmentName),
+        ),
+      };
+    }),
+  setSegmentDuration: (cameraName, segmentName, endTime) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      return {
+        dirty: true,
+        editingSegments: state.editingSegments.map((segment) =>
+          segment.camera_name === cameraName && segment.segment_name === segmentName
+            ? { ...segment, end_time: endTime }
+            : segment,
+        ),
+      };
+    }),
   setActiveCamera: (cameraName) => set({ activeCameraName: cameraName }),
   setPlaying: (playing) =>
     set((state) => {
@@ -127,6 +381,13 @@ export const useStore = create<StoreState>((set) => ({
       activeCameraName: null,
       isPlaying: false,
       currentTime: 0,
+      editMode: false,
+      dirty: false,
+      selectedSegment: null,
+      editingSegments: null,
+      gltfSegmentPoses: {},
+      blendVersions: [],
+      targetNodePositions: {},
       characterTransforms: {},
     }),
 }));
@@ -136,12 +397,11 @@ export const useStore = create<StoreState>((set) => ({
  *  - 该相机无段（纯静态零动画）：整段兜底，视为整个时间轴生效
  */
 export function isCameraActive(
-  shot: ShotMetadata | null,
+  segments: ShotSegment[],
   cameraName: string | null,
   currentTime: number,
 ): boolean {
-  if (!shot || !cameraName) return false;
-  const segments = shot.segments ?? [];
+  if (!cameraName) return false;
   const cameraSegments = segments.filter(
     (segment) => segment.camera_name === cameraName,
   );

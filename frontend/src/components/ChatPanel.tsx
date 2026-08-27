@@ -61,6 +61,9 @@ export function ChatPanel() {
   const lastToolStartTime = useRef<number | null>(null);
   const currentSessionId = useStore((state) => state.currentSessionId);
   const newChatToken = useStore((state) => state.newChatToken);
+  const shot = useStore((state) => state.shot);
+  const blendVersions = useStore((state) => state.blendVersions);
+  const switchBlend = useStore((state) => state.switchBlend);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -184,6 +187,7 @@ export function ChatPanel() {
       isPlaying: false,
       isLoading: false,
       errorMessage: null,
+      blendVersions: [],
     });
   };
 
@@ -379,6 +383,23 @@ export function ChatPanel() {
           onNewChat={() => useStore.getState().requestNewChat()}
         />
       </div>
+
+      {shot && blendVersions.length > 0 && (
+        <div className={styles.blendBar}>
+          <select
+            className={styles.blendSelect}
+            value={shot.export_hash}
+            onChange={(event) => void switchBlend(event.target.value)}
+            title="Switch blend version"
+          >
+            {blendVersions.map((blend) => (
+              <option key={blend.blend_hash} value={blend.blend_hash}>
+                {blend.filename}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className={styles.messageList}>
         {messages.length === 0 && (

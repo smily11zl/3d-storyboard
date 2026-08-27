@@ -24,8 +24,15 @@
   min-height: 0;
 }
 
+.editBody {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 .viewportArea {
   flex: 1;
+  min-width: 0;
   display: flex;
   gap: 4px;
   padding: 4px;

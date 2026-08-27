@@ -11,6 +11,7 @@ import { SceneModel } from './SceneModel';
 import { CameraIndicator } from './CameraIndicator';
 import { SelectionControls } from './SelectionControls';
 import { BrowseControls } from './BrowseControls';
+import { CameraEditControls } from './CameraEditControls';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 import styles from './FreeView.module.css';
@@ -162,6 +163,7 @@ export function FreeView({ gltfData }: FreeViewProperties) {
               infoDisplayReference={transformInfoReference}
               enabled={viewMode === 'edit'}
             />
+            <CameraEditControls gltfData={gltfData} />
             <BrowseControls enabled={viewMode === 'browse'} />
           </Suspense>
           {/* Blender-style XYZ rotation gizmo, bottom-right */}

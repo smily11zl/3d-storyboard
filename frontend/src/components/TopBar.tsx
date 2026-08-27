@@ -12,6 +12,8 @@ export function TopBar({ onOpenSettings }: TopBarProperties) {
   const toggleSidebar = useStore((state) => state.toggleSidebar);
   const uploadFile = useStore((state) => state.uploadFile);
   const requestNewChat = useStore((state) => state.requestNewChat);
+  const shot = useStore((state) => state.shot);
+  const setEditMode = useStore((state) => state.setEditMode);
   const fileInputReference = useRef<HTMLInputElement | null>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,14 +77,25 @@ export function TopBar({ onOpenSettings }: TopBarProperties) {
           onChange={handleFileSelect}
         />
       </div>
-      <button
-        className={styles.iconButton}
-        onClick={onOpenSettings}
-        title="API Settings"
-        aria-label="Open settings"
-      >
-        ⚙
-      </button>
+      <div className={styles.rightGroup}>
+        {shot && (
+          <button
+            className={styles.editButton}
+            onClick={() => setEditMode(true)}
+            title="Edit camera segments"
+          >
+            Edit
+          </button>
+        )}
+        <button
+          className={styles.iconButton}
+          onClick={onOpenSettings}
+          title="API Settings"
+          aria-label="Open settings"
+        >
+          ⚙
+        </button>
+      </div>
     </header>
   );
 }

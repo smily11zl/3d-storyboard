@@ -24,6 +24,21 @@ GENERATION_TIMEOUT_SECONDS = int(os.environ.get("GENERATION_TIMEOUT_SECONDS", "1
 def get_output_root() -> Path:
     """输出根目录（动态计算，便于测试替换 GENERATE_ROOT）。"""
     return GENERATE_ROOT / "output"
+
+
+def get_upload_output_root() -> Path:
+    """上传源的输出根目录（generate/upload_output，与 output 并列）。"""
+    return GENERATE_ROOT / "upload_output"
+
+
+def get_latest_blend(folder: Path) -> Path | None:
+    """返回 folder 里 mtime 最新的 .blend 文件（排除 .blend1 备份），无则 None。"""
+    blends = [p for p in folder.iterdir() if p.is_file() and p.suffix == ".blend"]
+    if not blends:
+        return None
+    return max(blends, key=lambda p: p.stat().st_mtime)
+
+
 GENERATION_INSTRUCTION_PREFIX = (
     "请使用 storyboard-scene-generator skill 生成 3D 场景。"
     "输出目录已指定，请将最终 .blend 保存为: {output_dir}/scene.blend。"
@@ -151,28 +166,18 @@ async def stream_from_agent(description: str, output_dir: Path, session_id: str 
 
 
 async def export_scene(blend_path: Path, output_dir: Path) -> dict:
-    """导出 .blend → glTF（复用上传流程：hash → exports/<hash> → 元数据）。
+    """导出 .blend → glTF（复用主流程 ingest_blend：hash → exports/<hash> → 元数据）。
 
     返回 shot 元数据（export_hash / gltf_output_url / cameras / animations…）。
+    output_dir 参数保留以兼容调用方与测试 mock；实际入库逻辑统一走 ingest_blend。
     """
     from backend import main as main_module  # 延迟导入避免循环依赖
 
     try:
-        export_hash = main_module.compute_file_hash(str(blend_path))
-        export_directory = main_module.EXPORTS_ROOT / export_hash
-        export_directory.mkdir(parents=True, exist_ok=True)
-        await main_module.run_export(str(blend_path), str(export_directory))
-
-        gltf_filepath = export_directory / main_module.GLTF_OUTPUT_NAME
-        if not gltf_filepath.is_file():
-            raise RuntimeError("Export completed but scene.gltf was not created")
-
-        metadata = main_module.build_shot_metadata(
-            export_hash, export_directory, str(gltf_filepath)
+        return await main_module.ingest_blend(
+            str(blend_path),
+            source={"type": "chat", "folder": output_dir.name},
         )
-        main_module.save_shot_metadata(export_hash, metadata)
-        main_module.enforce_disk_quota()
-        return metadata
     except RuntimeError as error:
         raise RuntimeError(f"导出失败: {error}") from error
 
@@ -376,8 +381,8 @@ async def reload_shot(task_id: str) -> dict:
     保留 status.json 里的 session_id / usage，只更新 shot。
     """
     output_dir = get_output_root() / task_id
-    blend_path = output_dir / "scene.blend"
-    if not blend_path.exists():
+    blend_path = get_latest_blend(output_dir)
+    if blend_path is None:
         raise HTTPException(status_code=404, detail="blend 不存在")
 
     # 读旧 status.json，保留 session_id / usage（若有）

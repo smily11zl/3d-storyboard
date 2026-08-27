@@ -14,6 +14,13 @@ export interface Pose {
   rotation: [number, number, number];
 }
 
+export interface BlendVersion {
+  filename: string;
+  version: number;
+  mtime: number;
+  blend_hash: string;
+}
+
 export interface ConstraintEntry {
   type: string;
   target: string | null;
@@ -26,6 +33,11 @@ export interface SegmentConstraint {
   rotation?: ConstraintEntry[];
 }
 
+export interface SegmentInterpolation {
+  position: string;
+  rotation: string;
+}
+
 export interface ShotSegment {
   camera_name: string;
   segment_name: string;
@@ -35,6 +47,9 @@ export interface ShotSegment {
   end_pose: Pose;
   segment_type: "S" | "C";
   constraint?: SegmentConstraint;
+  interpolation?: SegmentInterpolation;
+  /** 编辑态的朝向模式（interpolate=角度 / follow=目标点）。 */
+  orientation_mode?: "interpolate" | "follow";
 }
 
 export interface ShotMetadata {

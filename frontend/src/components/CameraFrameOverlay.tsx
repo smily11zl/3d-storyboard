@@ -26,12 +26,16 @@ export function CameraFrameOverlay() {
   const containerReference = useRef<HTMLDivElement | null>(null);
   const [frame, setFrame] = useState<FrameRect | null>(null);
   const shot = useStore((state) => state.shot);
+  const editMode = useStore((state) => state.editMode);
+  const editingSegments = useStore((state) => state.editingSegments);
   const frameAspect = shot?.frame_aspect ?? DEFAULT_FRAME_ASPECT;
   const currentTime = useStore((state) => state.currentTime);
   const activeCameraName = useStore((state) => state.activeCameraName);
 
-  // 当前激活相机是否生效 → 边框蓝/红（无段时 fallback 到该相机是否有动画）。
-  const isActive = isCameraActive(shot, activeCameraName, currentTime);
+  // 当前激活相机是否生效 → 边框蓝/红（编辑态看编辑副本，查看态看原始段）。
+  const segments =
+    editMode && editingSegments ? editingSegments : shot?.segments ?? [];
+  const isActive = isCameraActive(segments, activeCameraName, currentTime);
   const borderColor = isActive ? ACTIVE_BORDER_COLOR : INACTIVE_BORDER_COLOR;
 
   useEffect(() => {
