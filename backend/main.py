@@ -242,7 +242,7 @@ def next_blend_version(directory: Path) -> int:
 
 class EditRequest(BaseModel):
     segments: list[dict]
-    target_positions: dict[str, list[float]]
+    target_positions: dict[str, list[float]] | None = None
 
 
 def save_shot_metadata(export_hash: str, metadata: dict):
@@ -452,6 +452,14 @@ async def edit_shot(export_hash: str, request: EditRequest):
         raise HTTPException(status_code=500, detail=str(error))
 
 
+def _blend_to_script_name(blend_filename: str) -> str:
+    """scene.blend → script.py；scene_vN.blend → script_vN.py。"""
+    if blend_filename == "scene.blend":
+        return "script.py"
+    version = blend_filename[len("scene_v"):-len(".blend")]
+    return f"script_v{version}.py"
+
+
 @application.get("/api/shots/{export_hash}/blends")
 async def list_blends(export_hash: str):
     """返回该 shot 源目录下的 blend 版本列表（按 mtime 排序，最新在末）。"""
@@ -469,11 +477,14 @@ async def list_blends(export_hash: str):
     for file_path in sorted(folder.iterdir()):
         if file_path.suffix != ".blend":
             continue
+        script_name = _blend_to_script_name(file_path.name)
         blends.append(
             {
                 "filename": file_path.name,
                 "mtime": file_path.stat().st_mtime,
                 "blend_hash": compute_file_hash(str(file_path)),
+                # 有对应 script_vN.py = AI 生成；无 = 直接改 blend（手动/AI 改 blend）
+                "has_script": (folder / script_name).exists(),
             }
         )
     blends.sort(key=lambda blend: blend["mtime"])

@@ -39,22 +39,56 @@ def get_latest_blend(folder: Path) -> Path | None:
     return max(blends, key=lambda p: p.stat().st_mtime)
 
 
-GENERATION_INSTRUCTION_PREFIX = (
-    "请使用 storyboard-scene-generator skill 生成 3D 场景。"
-    "输出目录已指定，请将最终 .blend 保存为: {output_dir}/scene.blend。"
-    "所有中间文件放在该目录内。"
-)
-
-EDIT_INSTRUCTION_PREFIX = (
-    "这是对已有场景的二次修改。请读回 {output_dir}/script.py，"
-    "按用户要求修改代码，重新运行生成 scene.blend 覆盖。不要新建代码文件。"
-)
+def _blend_to_script(blend_filename: str) -> str:
+    """scene.blend → script.py；scene_vN.blend → script_vN.py。"""
+    if blend_filename == "scene.blend":
+        return "script.py"
+    version = blend_filename[len("scene_v"):-len(".blend")]
+    return f"script_v{version}.py"
 
 
-def build_instruction(output_dir: Path, is_edit: bool) -> str:
-    """生成指令（system prompt）：首轮生成 / 二次修改两种模式。"""
-    template = EDIT_INSTRUCTION_PREFIX if is_edit else GENERATION_INSTRUCTION_PREFIX
-    return template.format(output_dir=output_dir)
+def build_instruction(output_dir: Path, output_version: int, current_blend: str | None) -> str:
+    """生成指令：提供输出目录 / 输出版本号 / 当前查看版本，意图由 AI 根据用户消息判断。
+
+    output_version：输出版本号。1 = 无后缀（script.py + scene.blend），>=2 = 带 vN 后缀。
+    current_blend：用户当前查看的 blend 文件名（None = 无）。
+    """
+    if output_version == 1:
+        output_script, output_blend = "script.py", "scene.blend"
+    else:
+        output_script, output_blend = (
+            f"script_v{output_version}.py",
+            f"scene_v{output_version}.blend",
+        )
+
+    lines = [
+        "请先用 skill_view 重新加载 storyboard-scene-generator skill 的最新内容（可能已更新），"
+        "不要依赖之前对话里的旧记忆。",
+        f"输出目录：{output_dir}",
+        f"本次输出文件：{output_script} + {output_blend}",
+    ]
+    if current_blend:
+        input_script = _blend_to_script(current_blend)
+        lines.append(
+            f"用户当前选中的版本：{current_blend}（对应 {input_script}）。"
+        )
+    else:
+        lines.append("用户当前没有选中任何版本。")
+    lines.append(
+        "【修改基础的选择规则——必须严格遵守】\n"
+        "1. 若用户消息里明确指定了要基于哪个版本（如「基于 v1 改」「在 v2 基础上」），"
+        "按用户说的版本读对应的 script 文件。\n"
+        "2. 若用户没说版本，但上面给出了「用户当前选中的版本」，"
+        "则必须基于该选中版本读对应的 script 文件，禁止改选其他版本。\n"
+        "3. 只有用户既没说版本、也没有选中版本时，才读目录里版本号最新的 script。\n"
+        "禁止用 search_files 搜索目录、按 mtime 挑「最新」来覆盖上述规则。"
+        "禁止以「保留所有已有相机/内容」为由改用最新版本。"
+    )
+    lines.append(
+        "请根据用户消息判断意图：描述一个新场景 → 走生成流程；"
+        "描述对现有场景的改动 → 走修改流程。所有输出都写入本次输出文件。"
+    )
+    return "\n".join(lines)
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
 
@@ -64,13 +98,20 @@ ACTIVE_TASKS: dict[str, dict] = {}
 
 class GeneratePayload(BaseModel):
     description: str
-    session_id: str | None = None  # 二次修改时传入，续接已有会话
-    folder_name: str | None = None  # 二次修改时传入，定位输出文件夹（旧会话无 session_id 映射时兜底）
+    session_id: str | None = None  # 续接已有会话（不再用于判定「生成/修改」意图）
+    folder_name: str | None = None  # 定位输出文件夹（旧会话无 session_id 映射时兜底）
+    current_blend: str | None = None  # 当前查看的 blend 文件名（如 scene_v2.blend），修改时作为基准
 
 
 # ── 可替换依赖（测试 mock 点）──────────────────────────────────────────────
 
-async def stream_from_agent(description: str, output_dir: Path, session_id: str | None = None):
+async def stream_from_agent(
+    description: str,
+    output_dir: Path,
+    session_id: str | None = None,
+    output_version: int = 1,
+    current_blend: str | None = None,
+):
     """向 Hermes API Server 提交生成，产出事件流。
 
     首轮（session_id=None）：先 POST /api/sessions 建会话拿 session_id，
@@ -84,8 +125,11 @@ async def stream_from_agent(description: str, output_dir: Path, session_id: str 
 
     api_key = agent_service.get_api_server_key()
     headers = {"Authorization": f"Bearer {api_key}"}
-    is_edit = session_id is not None
-    instruction = build_instruction(output_dir, is_edit)
+    instruction = build_instruction(output_dir, output_version, current_blend)
+    print(
+        f"[generate] instruction: output_version={output_version}, "
+        f"current_blend={current_blend!r}\n{instruction}\n"
+    )
 
     async with httpx.AsyncClient(timeout=None) as http_client:
         # 首轮：建会话拿 session_id（可控，用于写 status.json 映射）
@@ -238,7 +282,11 @@ async def run_generation_task(task_id: str) -> None:
     try:
         async with asyncio.timeout(GENERATION_TIMEOUT_SECONDS):
             async for event in stream_from_agent(
-                record["description"], output_dir, record.get("session_id")
+                record["description"],
+                output_dir,
+                record.get("session_id"),
+                record.get("output_version", 1),
+                record.get("current_blend"),
             ):
                 if record["cancel_event"].is_set():
                     break
@@ -260,9 +308,9 @@ async def run_generation_task(task_id: str) -> None:
             record["final_status"] = "cancelled"
             return
 
-        blend_path = output_dir / "scene.blend"
-        if not blend_path.exists():
-            raise RuntimeError(f"生成完成但未找到 {blend_path}")
+        blend_path = get_latest_blend(output_dir)
+        if blend_path is None:
+            raise RuntimeError(f"生成完成但未找到 blend 文件")
 
         # 导出（自动重试 1 次）→ 返回 shot 元数据（gltf URL / cameras / animations）
         last_error = None
@@ -333,6 +381,10 @@ def create_generation(payload: GeneratePayload) -> dict:
         raise HTTPException(status_code=422, detail="描述不能为空")
 
     session_id = payload.session_id
+    print(
+        f"[generate] 收到请求: session_id={session_id!r}, "
+        f"folder_name={payload.folder_name!r}, current_blend={payload.current_blend!r}"
+    )
     if session_id:
         # 二次修改：优先用前端传来的 folder_name，否则按 session_id 反查
         folder_name = payload.folder_name
@@ -346,17 +398,24 @@ def create_generation(payload: GeneratePayload) -> dict:
         if not output_dir.is_dir():
             raise HTTPException(status_code=404, detail="会话对应的输出文件夹不存在")
         task_id = folder_name
+        # 复用目录：输出版本号 = 现有 blend 最新版本号 +1（避免覆盖手动保存的版本）
+        from backend import main as main_module
+
+        output_version = main_module.next_blend_version(output_dir)
     else:
         # 首轮：新建时间戳文件夹
         task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_dir = get_output_root() / task_id
         output_dir.mkdir(parents=True, exist_ok=True)
+        output_version = 1
 
     write_status(output_dir, "running")
     ACTIVE_TASKS[task_id] = {
         "description": payload.description.strip(),
         "output_dir": output_dir,
         "session_id": session_id,
+        "output_version": output_version,
+        "current_blend": payload.current_blend,
         "queue": asyncio.Queue(),
         "cancel_event": asyncio.Event(),
         "started": False,

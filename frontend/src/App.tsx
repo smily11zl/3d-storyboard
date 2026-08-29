@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { Pose } from './types';
+import type { Pose, ShotSegment } from './types';
 import { UploadZone } from './components/UploadZone';
 import { CameraView } from './components/CameraView';
 import { FreeView } from './components/FreeView';
@@ -81,6 +81,79 @@ function extractSegmentPoses(
   return poses;
 }
 
+/** 采样 VectorKeyframeTrack 在 time 处的值（线性插值，越界取端点）。 */
+function sampleVectorTrack(
+  track: THREE.VectorKeyframeTrack,
+  time: number,
+): [number, number, number] {
+  const times = track.times;
+  const values = track.values as Float32Array;
+  const stride = track.getValueSize();
+  if (times.length === 0) return [0, 0, 0];
+  if (time <= times[0]) return [values[0], values[1], values[2]];
+  if (time >= times[times.length - 1]) {
+    const offset = (times.length - 1) * stride;
+    return [values[offset], values[offset + 1], values[offset + 2]];
+  }
+  for (let i = 0; i < times.length - 1; i++) {
+    if (time >= times[i] && time <= times[i + 1]) {
+      const t = (time - times[i]) / (times[i + 1] - times[i]);
+      const a = i * stride;
+      const b = (i + 1) * stride;
+      return [
+        values[a] + (values[b] - values[a]) * t,
+        values[a + 1] + (values[b + 1] - values[a + 1]) * t,
+        values[a + 2] + (values[b + 2] - values[a + 2]) * t,
+      ];
+    }
+  }
+  const offset = (times.length - 1) * stride;
+  return [values[offset], values[offset + 1], values[offset + 2]];
+}
+
+/** 从 aim_target 位置动画里，按段提取每段 TRACK_TO 目标点位置（glTF Y-up）。 */
+function extractSegmentTargets(
+  gltf: GLTF,
+  segments: ShotSegment[],
+): Record<string, Record<string, [number, number, number]>> {
+  const result: Record<string, Record<string, [number, number, number]>> = {};
+
+  const targetNames = new Set<string>();
+  for (const segment of segments) {
+    const targetName = segment.constraint?.rotation?.[0]?.target ?? null;
+    const mode =
+      segment.orientation_mode ?? (segment.constraint?.rotation?.length ? 'follow' : 'interpolate');
+    if (mode === 'follow' && targetName) targetNames.add(targetName);
+  }
+  if (targetNames.size === 0) return result;
+
+  const targetTracks = new Map<string, THREE.VectorKeyframeTrack>();
+  for (const clip of gltf.animations) {
+    const positionTrack = clip.tracks.find((track) => track.name.endsWith('.position'));
+    if (!positionTrack) continue;
+    const nodeName = positionTrack.name.slice(0, -'.position'.length);
+    if (targetNames.has(nodeName) && !targetTracks.has(nodeName)) {
+      targetTracks.set(nodeName, positionTrack as THREE.VectorKeyframeTrack);
+    }
+  }
+
+  for (const segment of segments) {
+    const targetName = segment.constraint?.rotation?.[0]?.target ?? null;
+    if (!targetName) continue;
+    const mode =
+      segment.orientation_mode ?? (segment.constraint?.rotation?.length ? 'follow' : 'interpolate');
+    if (mode !== 'follow') continue;
+    const track = targetTracks.get(targetName);
+    if (!track) continue;
+    // 用段中点采样（段起点正好是前一段的终点关键帧，会采到前一段的 target）
+    const midTime = (segment.start_time + segment.end_time) / 2;
+    const position = sampleVectorTrack(track, midTime);
+    (result[segment.camera_name] ??= {})[segment.segment_name] = position;
+  }
+
+  return result;
+}
+
 function cloneGLTF(source: GLTF): GLTF {
   // Each Canvas needs its own scene copy — Three.js objects can only have one parent.
   // SkeletonUtils.clone properly clones skinned meshes (skeleton/bone references),
@@ -143,6 +216,7 @@ function App() {
           currentTime: startTime,
           targetNodePositions,
           gltfSegmentPoses: extractSegmentPoses(loadedData),
+          segmentTargets: extractSegmentTargets(loadedData, shot.segments ?? []),
           gltfAnimations: loadedData.animations,
         });
         setGltfOriginal(loadedData);

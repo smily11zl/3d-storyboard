@@ -9,8 +9,11 @@ from __future__ import annotations
 from typing import Any
 
 
-def parse_full_edit(segments: Any, target_positions: Any) -> dict[str, Any]:
-    """解析并校验完整回存 payload。返回规范化后的 {segments, target_positions}。"""
+def parse_full_edit(segments: Any, target_positions: Any = None) -> dict[str, Any]:
+    """解析并校验完整回存 payload。返回规范化后的 {segments, target_positions}。
+
+    target_positions 现为可选：每段 target 位置已随段 target_position 字段走。
+    """
     if not isinstance(segments, list):
         raise ValueError("segments must be a list")
     parsed_segments: list[dict[str, Any]] = []
@@ -19,13 +22,14 @@ def parse_full_edit(segments: Any, target_positions: Any) -> dict[str, Any]:
             raise ValueError("each segment must be an object")
         parsed_segments.append(_parse_segment(segment))
 
-    if not isinstance(target_positions, dict):
-        raise ValueError("target_positions must be an object")
     parsed_targets: dict[str, list[float]] = {}
-    for name, position in target_positions.items():
-        if not isinstance(name, str):
-            raise ValueError("target name must be a string")
-        parsed_targets[name] = _parse_vec3(position)
+    if target_positions is not None:
+        if not isinstance(target_positions, dict):
+            raise ValueError("target_positions must be an object")
+        for name, position in target_positions.items():
+            if not isinstance(name, str):
+                raise ValueError("target name must be a string")
+            parsed_targets[name] = _parse_vec3(position)
 
     return {"segments": parsed_segments, "target_positions": parsed_targets}
 
@@ -75,6 +79,8 @@ def _parse_segment(segment: dict[str, Any]) -> dict[str, Any]:
             {"time": float(keyframe["time"]), "rotation": _parse_vec3(keyframe["rotation"])}
             for keyframe in segment["rotation_keyframes"]
         ]
+    if "target_position" in segment and segment["target_position"] is not None:
+        parsed["target_position"] = _parse_vec3(segment["target_position"])
     return parsed
 
 

@@ -23,7 +23,7 @@ def isolate_generate_paths(monkeypatch, tmp_path):
 def make_agent_stream(events):
     """构造 mock agent SSE 事件流（按事件类型返回）。"""
 
-    async def fake_stream(description, output_dir, session_id=None):
+    async def fake_stream(description, output_dir, session_id=None, output_version=1, current_blend=None):
         for event in events:
             yield event
 
@@ -132,7 +132,7 @@ def test_generate_export_retries_once_on_failure(monkeypatch, tmp_path):
 def test_generate_failure_marks_failed_with_error(monkeypatch, tmp_path):
     """agent 流异常：status=failed + error 信息 + 日志文件。"""
 
-    async def failing_stream(description, output_dir, session_id=None):
+    async def failing_stream(description, output_dir, session_id=None, output_version=1, current_blend=None):
         raise RuntimeError("Blender 脚本报错: NameError")
         yield  # pragma: no cover
 
@@ -278,17 +278,32 @@ def test_generate_edit_uses_folder_name_when_session_unmapped(monkeypatch, tmp_p
 
 
 def test_build_instruction_first_and_edit():
-    """指令模板：首轮含 skill 生成指令，二次修改含读回 script.py。"""
+    """指令模板：提供输出目录/版本号/当前查看版本，意图由 AI 判断。"""
     from pathlib import Path
 
-    first = generate.build_instruction(Path("/out/20260814_075856"), is_edit=False)
-    edit = generate.build_instruction(Path("/out/20260814_075856"), is_edit=True)
+    first = generate.build_instruction(
+        Path("/out/20260814_075856"), output_version=1, current_blend=None
+    )
+    versioned = generate.build_instruction(
+        Path("/out/20260814_075856"), output_version=3, current_blend="scene_v2.blend"
+    )
 
     assert "storyboard-scene-generator" in first
+    assert "script.py" in first
     assert "scene.blend" in first
-    assert "二次修改" in edit
-    assert "script.py" in edit
-    assert "不要新建" in edit
+    # 版本化输出
+    assert "script_v3.py" in versioned
+    assert "scene_v3.blend" in versioned
+    # 当前查看版本 + 对应 script
+    assert "scene_v2.blend" in versioned
+    assert "script_v2.py" in versioned
+
+
+def test_blend_to_script_mapping():
+    """scene.blend → script.py；scene_vN.blend → script_vN.py。"""
+    assert generate._blend_to_script("scene.blend") == "script.py"
+    assert generate._blend_to_script("scene_v2.blend") == "script_v2.py"
+    assert generate._blend_to_script("scene_v10.blend") == "script_v10.py"
 
 
 def test_generate_status_endpoint_returns_status_file(monkeypatch, tmp_path):
@@ -308,7 +323,7 @@ def test_generate_timeout_marks_failed(monkeypatch, tmp_path):
     """超时：status=failed(timeout)。"""
     monkeypatch.setattr(generate, "GENERATION_TIMEOUT_SECONDS", 0.1)
 
-    async def slow_stream(description, output_dir):
+    async def slow_stream(description, output_dir, session_id=None, output_version=1, current_blend=None):
         await asyncio.sleep(5)
         yield {"type": "text", "content": "太慢了"}
 

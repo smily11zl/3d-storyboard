@@ -56,6 +56,9 @@ export function BlendVersionDropdown({
               }}
             >
               <span className={styles.filename}>{blend.filename}</span>
+              <span className={styles.sourceTag}>
+                {blend.has_script ? 'AI generated' : 'Blend modified'}
+              </span>
             </div>
           ))}
         </div>

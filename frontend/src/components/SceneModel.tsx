@@ -24,7 +24,6 @@ function applySegmentToClip(
   clip: THREE.AnimationClip,
   segment: ShotSegment,
   instanceLabel: string,
-  targetNodePosition: [number, number, number] | undefined,
 ): void {
   if (segment.segment_type === 'C') return;
 
@@ -76,10 +75,10 @@ function applySegmentToClip(
       segment.orientation_mode ?? (segment.constraint?.rotation?.length ? 'follow' : 'interpolate');
     let startQuat: THREE.Quaternion;
     let endQuat: THREE.Quaternion;
-    if (orientationMode === 'follow' && targetNodePosition) {
-      // follow：朝向 = lookAt 目标点（TRACK_TO 约束），由目标点位置派生
-      startQuat = lookAtQuaternion(segment.start_pose.position, targetNodePosition);
-      endQuat = lookAtQuaternion(segment.end_pose.position, targetNodePosition);
+    if (orientationMode === 'follow' && segment.target_position) {
+      // follow：朝向 = lookAt 该段自己的目标点（每段独立），由段 target_position 派生
+      startQuat = lookAtQuaternion(segment.start_pose.position, segment.target_position);
+      endQuat = lookAtQuaternion(segment.end_pose.position, segment.target_position);
     } else {
       startQuat = new THREE.Quaternion().setFromEuler(
         new THREE.Euler(
@@ -126,8 +125,22 @@ function scheduleSegmentWeights(
   mixer: THREE.AnimationMixer,
   actions: Record<string, THREE.AnimationAction | null>,
   segments: ShotSegment[],
+  cameraNodeNames: Set<string>,
 ): void {
-  if (segments.length === 0) return;
+  const disableCameraAction = (action: THREE.AnimationAction) => {
+    const clip = action.getClip();
+    const isCameraClip = clip.tracks.some((track) => cameraNodeNames.has(track.name.split('.')[0]));
+    if (isCameraClip) {
+      action.weight = 0;
+      action.enabled = false;
+    }
+  };
+  if (segments.length === 0) {
+    for (const action of Object.values(actions)) {
+      if (action) disableCameraAction(action);
+    }
+    return;
+  }
   const cameraSegments = new Map<string, ShotSegment[]>();
   for (const segment of segments) {
     const list = cameraSegments.get(segment.camera_name) ?? [];
@@ -137,7 +150,11 @@ function scheduleSegmentWeights(
   for (const [name, action] of Object.entries(actions)) {
     if (!action) continue;
     const segment = segments.find((candidate) => candidate.segment_name === name);
-    if (!segment) continue;
+    if (!segment) {
+      // 段已删除：只禁用残留的「相机段」action，角色骨骼动画保持 active
+      disableCameraAction(action);
+      continue;
+    }
     const cameraList = cameraSegments.get(segment.camera_name) ?? [segment];
     const cameraStart = Math.min(...cameraList.map((item) => item.start_time));
     const cameraEnd = Math.max(...cameraList.map((item) => item.end_time));
@@ -147,6 +164,7 @@ function scheduleSegmentWeights(
     const upperBound = isLastSegment ? Infinity : segment.end_time;
     const isActive = mixer.time >= lowerBound && mixer.time < upperBound;
     action.weight = isActive ? 1 : 0;
+    action.enabled = true;
   }
 }
 
@@ -159,7 +177,8 @@ interface SceneModelProperties {
 export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelProperties) {
   const editMode = useStore((state) => state.editMode);
   const editingSegments = useStore((state) => state.editingSegments);
-  const targetNodePositions = useStore((state) => state.targetNodePositions);
+  // 所有相机节点名（用于区分「相机段 clip」与「角色骨骼动画 clip」），由 configureMixerActions 收集
+  const cameraNodeNamesRef = useRef<Set<string>>(new Set());
 
   // 编辑态：深拷贝 clips 作为编辑副本。这和「切换 blend 换一份 clips」是同一件事——
   // 只是喂给 useAnimations 的 clips 不同，mixer / 每帧驱动 / 配置全部复用，不再新建 mixer。
@@ -205,13 +224,11 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
           );
           clips.push(clip);
         }
-        const targetName = segment.constraint?.rotation?.[0]?.target ?? null;
-        const targetNodePosition = targetName ? targetNodePositions[targetName] : undefined;
-        applySegmentToClip(clip, segment, lockedCamera ? 'CameraView' : 'FreeView', targetNodePosition);
+        applySegmentToClip(clip, segment, lockedCamera ? 'CameraView' : 'FreeView');
       }
     }
     return clips;
-  }, [editMode, gltfData.animations, editingSegments, targetNodePositions]);
+  }, [editMode, gltfData.animations, editingSegments]);
 
   // 完全隔离：查看态和编辑态各用独立的 mixer + actions，互不污染。
   // 两个 mixer 都绑定同一个 scene，但只在各自模式（editMode 切换）下激活。
@@ -387,7 +404,7 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
         mixer.setTime(restartTime);
         // setTime 采样用的还是「上一帧」的 weight（最后一段=1），会导致回第一帧时
         // 采样到末段首值。这里按 restartTime 重新调度 weight 再 update(0) 重采样。
-        scheduleSegmentWeights(mixer, actionsReference.current, segments);
+        scheduleSegmentWeights(mixer, actionsReference.current, segments, cameraNodeNamesRef.current);
         mixer.update(0);
         // 同步 threeCamera（画面）到第一帧的位置——相机跟踪只在播放态执行，
         // 这里 setPlaying(false) 之前手动同步一次，否则画面停在最后一帧。
@@ -416,6 +433,10 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
           if (action) action.paused = false;
         }
         mixer.setTime(storeTime);
+        // 重采样：setTime 只改 mixer 时间、不更新 action 采样；
+        // 需按新 time 重新调度 weight 再 update(0)，画面才真正跳到新 pose。
+        scheduleSegmentWeights(mixer, actionsReference.current, segments, cameraNodeNamesRef.current);
+        mixer.update(0);
         // Snap camera immediately after seeking
         if (lockedCamera && animatedCameraNode.current) {
           const worldPosition = new THREE.Vector3();
@@ -431,7 +452,7 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
     // Segment weight scheduling: only the clip whose time window contains
     // the playhead drives the camera. Runs every frame (playback AND seek)
     // so the active segment always matches mixer.time.
-    scheduleSegmentWeights(mixer, actionsReference.current, segments);
+    scheduleSegmentWeights(mixer, actionsReference.current, segments, cameraNodeNamesRef.current);
 
     // Track animated camera position every frame when locked AND playing
     if (lockedCamera && animatedCameraNode.current && store.isPlaying) {
@@ -463,13 +484,23 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
       for (const action of existingActions) {
         targetMixer.uncacheAction(action.getClip(), gltfData.scene);
       }
+      // 收集所有相机节点名（存 ref，供 useFrame 每帧调度复用），区分「相机段 clip」和「角色骨骼动画 clip」
+      cameraNodeNamesRef.current = new Set<string>();
+      gltfData.scene.traverse((node) => {
+        if ((node as THREE.PerspectiveCamera).isCamera && node.name) cameraNodeNamesRef.current.add(node.name);
+      });
+      const cameraNodeNames = cameraNodeNamesRef.current;
       const nextActions: Record<string, THREE.AnimationAction> = {};
+      const cameraActions: Record<string, THREE.AnimationAction> = {};
       for (const clip of targetClips) {
         const action = targetMixer.clipAction(clip, gltfData.scene);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
         action.play();
         nextActions[clip.name] = action;
+        // 只有 track 节点是相机的 clip 才参与段调度；角色骨骼动画始终 active
+        const isCameraClip = clip.tracks.some((track) => cameraNodeNames.has(track.name.split('.')[0]));
+        if (isCameraClip) cameraActions[clip.name] = action;
       }
       targetActionsReference.current = nextActions;
       window.__actions = nextActions;
@@ -479,7 +510,7 @@ export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelPro
         storeState.editMode && storeState.editingSegments
           ? storeState.editingSegments
           : storeState.shot?.segments ?? [];
-      scheduleSegmentWeights(targetMixer, nextActions, segments);
+      scheduleSegmentWeights(targetMixer, cameraActions, segments, cameraNodeNames);
       const currentTime = useStore.getState().currentTime;
       targetMixer.setTime(currentTime);
       targetMixer.update(0);

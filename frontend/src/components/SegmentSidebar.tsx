@@ -92,7 +92,6 @@ export function SegmentSidebar() {
   const selectedSegment = useStore((state) => state.selectedSegment);
   const setSelectedSegment = useStore((state) => state.setSelectedSegment);
   const editingSegments = useStore((state) => state.editingSegments);
-  const targetNodePositions = useStore((state) => state.targetNodePositions);
   const setSegmentPose = useStore((state) => state.setSegmentPose);
   const setSegmentTarget = useStore((state) => state.setSegmentTarget);
   const setOrientationMode = useStore((state) => state.setOrientationMode);
@@ -118,8 +117,7 @@ export function SegmentSidebar() {
   const startRotation = segment.start_pose.rotation;
   const endPosition = segment.end_pose.position;
   const endRotation = segment.end_pose.rotation;
-  const targetName = segment.constraint?.rotation?.[0]?.target ?? null;
-  const targetPosition = targetName ? targetNodePositions[targetName] ?? null : null;
+  const targetPosition = segment.target_position ?? null;
   const orientationMode =
     segment.orientation_mode ??
     (segment.constraint?.rotation?.length ? 'follow' : 'interpolate');

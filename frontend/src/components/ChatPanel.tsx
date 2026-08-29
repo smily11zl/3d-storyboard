@@ -139,6 +139,16 @@ export function ChatPanel() {
       } catch {
         // best-effort
       }
+    } else {
+      // 没有 output 的聊天：清空 viewer 状态，避免残留上一个聊天的场景 / 版本下拉
+      useStore.setState({
+        shot: null,
+        blendVersions: [],
+        gltfSegmentPoses: {},
+        gltfAnimations: null,
+        targetNodePositions: {},
+        activeCameraName: null,
+      });
     }
   };
 
@@ -152,6 +162,14 @@ export function ChatPanel() {
       useStore.getState().setCurrentSessionId(null);
       setMessages([]);
       setRetryDescription(null);
+      useStore.setState({
+        shot: null,
+        blendVersions: [],
+        gltfSegmentPoses: {},
+        gltfAnimations: null,
+        targetNodePositions: {},
+        activeCameraName: null,
+      });
     }
     void refreshSessionList();
   };
@@ -240,6 +258,11 @@ export function ChatPanel() {
       const currentSession = useStore
         .getState()
         .sessionList.find((session) => session.id === currentSessionId);
+      // 当前查看的 blend 文件名（修改时作为基准；有选中就传，意图判断交给 AI）
+      const viewer = useStore.getState();
+      const currentBlend = viewer.blendVersions.find(
+        (blend) => blend.blend_hash === viewer.shot?.export_hash,
+      )?.filename;
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,6 +270,7 @@ export function ChatPanel() {
           description: prompt,
           session_id: currentSessionId ?? undefined,
           folder_name: currentSession?.folder_name ?? undefined,
+          current_blend: currentBlend ?? undefined,
         }),
       });
       if (!response.ok) {

@@ -36,11 +36,8 @@ def apply_full_segments(input_blend, segments, target_positions, output_blend):
         for segment in camera_segments:
             _rebuild_segment(camera_obj, segment)
 
-    # 3. 统一设置 target 位置（坐标转化 Y-up → Z-up）
-    for target_name, position in target_positions.items():
-        target_obj = bpy.data.objects.get(target_name)
-        if target_obj is not None:
-            target_obj.location = _gltf_to_blender_position(position)
+    # 3. 按段重建 target 的 location 动画（每段独立位置，坐标转化 Y-up → Z-up）
+    _rebuild_target_animations(segments)
 
     # 4. 时间轴帧范围拉长到最末段的结束帧。新增段会让总时长变长，若不更新
     #    scene.frame_end，保存出的 blend 播放循环范围仍停在旧 frame_end（如 216），
@@ -55,6 +52,67 @@ def apply_full_segments(input_blend, segments, target_positions, output_blend):
 
     bpy.ops.wm.save_as_mainfile(filepath=output_blend)
     return True
+
+
+def _segment_target_name(segment):
+    """提取段 TRACK_TO 约束的 target 名（follow 段才有），无则 None。"""
+    constraint_meta = segment.get("constraint") or {}
+    for entry in constraint_meta.get("rotation", []):
+        if entry.get("type") == "TRACK_TO" and entry.get("target"):
+            return entry["target"]
+    return None
+
+
+def _rebuild_target_animations(segments):
+    """按段重建 target 的 location 动画（每段独立位置，段边界 CONSTANT 硬切）。
+
+    取代旧的「全局一个 target 位置」：follow 段各自的 target_position 写到
+    对应时间段的关键帧，interpolate 段不写（约束失效，位置不影响朝向）。
+    """
+    import bpy
+
+    fps = bpy.context.scene.render.fps
+
+    target_segments: dict[str, list] = {}
+    for segment in segments:
+        if segment.get("orientation_mode") != "follow":
+            continue
+        if segment.get("target_position") is None:
+            continue
+        target_name = _segment_target_name(segment)
+        if target_name is None:
+            continue
+        target_segments.setdefault(target_name, []).append(segment)
+
+    for target_name, segs in target_segments.items():
+        target_obj = bpy.data.objects.get(target_name)
+        if target_obj is None:
+            continue
+        # 清空旧 location 动画（保留其它数据），重建
+        if target_obj.animation_data is None:
+            target_obj.animation_data_create()
+        if target_obj.animation_data.action is None:
+            target_obj.animation_data.action = bpy.data.actions.new(f"{target_name}_location")
+        for fcurve in list(target_obj.animation_data.action.fcurves):
+            if fcurve.data_path == "location":
+                target_obj.animation_data.action.fcurves.remove(fcurve)
+
+        segs.sort(key=lambda segment: segment["start_time"])
+        for segment in segs:
+            start_frame = round(segment["start_time"] * fps) + 1
+            end_frame = round(segment["end_time"] * fps)
+            position = _gltf_to_blender_position(segment["target_position"])
+            target_obj.location = position
+            target_obj.keyframe_insert(data_path="location", frame=start_frame)
+            target_obj.location = position
+            target_obj.keyframe_insert(data_path="location", frame=end_frame)
+
+        # 段边界 CONSTANT 硬切（不同段各自看各自的目标点，不渐变）
+        if target_obj.animation_data and target_obj.animation_data.action:
+            for fcurve in target_obj.animation_data.action.fcurves:
+                if fcurve.data_path == "location":
+                    for keyframe in fcurve.keyframe_points:
+                        keyframe.interpolation = "CONSTANT"
 
 
 def _clear_camera(camera_obj):

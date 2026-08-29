@@ -22,6 +22,9 @@ test/
 !.hermes-home/skills/
 .hermes-home/skills/*/
 !.hermes-home/skills/storyboard-scene-generator/
+.hermes-home/skills/.usage.json
+.hermes-home/skills/.usage.json.lock
+.hermes-home/skills/.curator_state
 
 # macOS
 .DS_Store

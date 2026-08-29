@@ -42,6 +42,8 @@ interface StoreState {
   setGltfSegmentPoses: (
     poses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>>,
   ) => void;
+  /** 每段 follow 目标点位置（glTF Y-up），从 aim_target 位置动画按段提取；编辑态塞进段 target_position。 */
+  segmentTargets: Record<string, Record<string, [number, number, number]>>;
   /** glTF 完整动画 clips（播放层数据引用；保存 C 段时现读完整采样点）。 */
   gltfAnimations: THREE.AnimationClip[] | null;
   setGltfAnimations: (animations: THREE.AnimationClip[]) => void;
@@ -97,9 +99,16 @@ interface StoreState {
 function buildEditingSegments(
   segments: ShotSegment[],
   gltfSegmentPoses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>>,
+  segmentTargets: Record<string, Record<string, [number, number, number]>>,
+  targetNodePositions: Record<string, [number, number, number]>,
 ): ShotSegment[] {
   return segments.map((segment) => {
     const pose = gltfSegmentPoses[segment.camera_name]?.[segment.segment_name];
+    // 每段 target：优先从 aim_target 动画提取的 segmentTargets；无动画（静态 target）回退到静态快照
+    const targetName = segment.constraint?.rotation?.[0]?.target ?? null;
+    const targetPosition =
+      segmentTargets[segment.camera_name]?.[segment.segment_name] ??
+      (targetName ? targetNodePositions[targetName] : undefined);
     return {
       ...segment,
       orientation_mode:
@@ -107,6 +116,7 @@ function buildEditingSegments(
         (segment.constraint?.rotation?.length ? 'follow' : 'interpolate'),
       start_pose: pose?.start_pose ?? segment.start_pose,
       end_pose: pose?.end_pose ?? segment.end_pose,
+      ...(targetPosition ? { target_position: targetPosition } : {}),
     };
   });
 }
@@ -175,6 +185,7 @@ export const useStore = create<StoreState>((set, get) => ({
   selectedSegment: null,
   editingSegments: null,
   gltfSegmentPoses: {},
+  segmentTargets: {},
   gltfAnimations: null,
   blendVersions: [],
   targetNodePositions: {},
@@ -221,7 +232,16 @@ export const useStore = create<StoreState>((set, get) => ({
   setCurrentSessionId: (id) => set({ currentSessionId: id }),
   setSessionList: (list) => set({ sessionList: list }),
   requestNewChat: () =>
-    set((state) => ({ newChatToken: state.newChatToken + 1, currentSessionId: null })),
+    set((state) => ({
+      newChatToken: state.newChatToken + 1,
+      currentSessionId: null,
+      shot: null,
+      blendVersions: [],
+      gltfSegmentPoses: {},
+      gltfAnimations: null,
+      targetNodePositions: {},
+      activeCameraName: null,
+    })),
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   setEditMode: (editing) =>
     set((state) => ({
@@ -229,7 +249,12 @@ export const useStore = create<StoreState>((set, get) => ({
       dirty: false,
       selectedSegment: null,
       editingSegments: editing
-        ? buildEditingSegments(state.shot?.segments ?? [], state.gltfSegmentPoses)
+        ? buildEditingSegments(
+            state.shot?.segments ?? [],
+            state.gltfSegmentPoses,
+            state.segmentTargets,
+            state.targetNodePositions,
+          )
         : null,
     })),
   setGltfSegmentPoses: (poses) => set({ gltfSegmentPoses: poses }),
@@ -252,8 +277,8 @@ export const useStore = create<StoreState>((set, get) => ({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        // target 位置已随每段 target_position 走，不再单独传全局 target_positions
         segments,
-        target_positions: state.targetNodePositions,
       }),
     });
     if (!response.ok) {
@@ -318,15 +343,16 @@ export const useStore = create<StoreState>((set, get) => ({
     }),
   setSegmentTarget: (key, targetPosition) =>
     set((state) => {
+      if (!state.editingSegments) return {};
       const [cameraName, segmentName] = key.split(':');
-      const segment = (state.editingSegments ?? []).find(
-        (candidate) => candidate.camera_name === cameraName && candidate.segment_name === segmentName,
-      );
-      const targetName = segment?.constraint?.rotation?.[0]?.target;
-      if (!targetName) return { dirty: true };
+      // 只改这一段的 target 位置（每段独立），不动其他段、不动全局 targetNodePositions
       return {
         dirty: true,
-        targetNodePositions: { ...state.targetNodePositions, [targetName]: targetPosition },
+        editingSegments: state.editingSegments.map((segment) =>
+          segment.camera_name === cameraName && segment.segment_name === segmentName
+            ? { ...segment, target_position: targetPosition }
+            : segment,
+        ),
       };
     }),
   setOrientationMode: (key, mode) =>
@@ -386,6 +412,8 @@ export const useStore = create<StoreState>((set, get) => ({
         segment_type: 'S',
         constraint: lastSegment?.constraint,
         orientation_mode: lastSegment?.orientation_mode,
+        // 继承上一段的 target 位置（follow 段），否则新段是 follow 但无 target，朝向退化成 identity（rotation 0）
+        target_position: lastSegment?.target_position ? [...lastSegment.target_position] : undefined,
       };
       return {
         dirty: true,

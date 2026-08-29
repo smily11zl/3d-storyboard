@@ -37,6 +37,7 @@ export function Timeline() {
 
   const handleScrub = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(event.target.value);
+    setPlaying(false);
     setCurrentTime(newTime);
   };
 

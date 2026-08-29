@@ -29,6 +29,8 @@ export interface BlendVersion {
   version: number;
   mtime: number;
   blend_hash: string;
+  /** 有对应 script_vN.py = AI 生成；无 = 直接改 blend。 */
+  has_script: boolean;
 }
 
 export interface ConstraintEntry {
@@ -60,6 +62,8 @@ export interface ShotSegment {
   interpolation?: SegmentInterpolation;
   /** 编辑态的朝向模式（interpolate=角度 / follow=目标点）。 */
   orientation_mode?: "interpolate" | "follow";
+  /** follow 段的 TRACK_TO 目标点位置（glTF Y-up），每段独立；interpolate 段无。 */
+  target_position?: [number, number, number];
   /** C 段：完整采样点（保存时逐帧复刻用）。 */
   position_keyframes?: PositionKeyframe[];
   rotation_keyframes?: RotationKeyframe[];

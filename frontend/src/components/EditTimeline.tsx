@@ -105,6 +105,7 @@ export function EditTimeline() {
   const handleTimelineMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
     const ruler = rulerReference.current;
     if (!ruler) return;
+    setPlaying(false);
     const rect = ruler.getBoundingClientRect();
     const updateTime = (clientX: number) => {
       const ratio = (clientX - rect.left) / rect.width;
