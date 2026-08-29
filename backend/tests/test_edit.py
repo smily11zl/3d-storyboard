@@ -48,6 +48,23 @@ def test_segment_optional_fields_preserved():
     assert segment["segment_type"] == "S"
 
 
+def test_orientation_mode_missing_with_track_to_defaults_to_follow():
+    result = parse_full_edit(
+        [
+            _segment(
+                constraint={"rotation": [{"type": "TRACK_TO", "target": "aim_target"}]},
+            )
+        ],
+        {},
+    )
+    assert result["segments"][0]["orientation_mode"] == "follow"
+
+
+def test_orientation_mode_missing_without_constraint_defaults_to_interpolate():
+    result = parse_full_edit([_segment()], {})
+    assert result["segments"][0]["orientation_mode"] == "interpolate"
+
+
 def test_segments_must_be_list():
     with pytest.raises(ValueError):
         parse_full_edit("not-a-list", {})

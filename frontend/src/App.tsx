@@ -143,6 +143,7 @@ function App() {
           currentTime: startTime,
           targetNodePositions,
           gltfSegmentPoses: extractSegmentPoses(loadedData),
+          gltfAnimations: loadedData.animations,
         });
         setGltfOriginal(loadedData);
         setSceneLoading(false);
@@ -184,13 +185,11 @@ function App() {
         <TopBar onOpenSettings={() => setSettingsOpen(true)} />
       )}
       <div className={styles.mainArea}>
-        {/* Keep ChatPanel mounted (CSS-hidden when collapsed) so the chat
-            history survives toggling the sidebar */}
-        {!editMode && (
-          <div className={sidebarCollapsed ? styles.hidden : undefined}>
-            <ChatPanel />
-          </div>
-        )}
+        {/* Keep ChatPanel mounted (CSS-hidden when collapsed or editing) so the
+            chat history survives toggling the sidebar AND entering/exiting edit mode */}
+        <div className={(sidebarCollapsed || editMode) ? styles.hidden : undefined}>
+          <ChatPanel />
+        </div>
         <div className={styles.contentArea}>
           {!editMode && <UploadZone />}
           {hasContent && !gltfOriginal && (

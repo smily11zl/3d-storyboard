@@ -56,6 +56,25 @@ def _parse_segment(segment: dict[str, Any]) -> dict[str, Any]:
         parsed["interpolation"] = segment["interpolation"]
     if "orientation_mode" in segment:
         parsed["orientation_mode"] = segment["orientation_mode"]
+    else:
+        # 旧缓存 segments 可能缺 orientation_mode：用 constraint 推导（与前端显示一致）。
+        # 有 TRACK_TO 约束 → follow（约束 lookAt 驱动）；否则 interpolate（关键帧插值）。
+        rotation_constraints = (segment.get("constraint") or {}).get("rotation", [])
+        parsed["orientation_mode"] = (
+            "follow"
+            if any(entry.get("type") == "TRACK_TO" for entry in rotation_constraints)
+            else "interpolate"
+        )
+    if "position_keyframes" in segment:
+        parsed["position_keyframes"] = [
+            {"time": float(keyframe["time"]), "position": _parse_vec3(keyframe["position"])}
+            for keyframe in segment["position_keyframes"]
+        ]
+    if "rotation_keyframes" in segment:
+        parsed["rotation_keyframes"] = [
+            {"time": float(keyframe["time"]), "rotation": _parse_vec3(keyframe["rotation"])}
+            for keyframe in segment["rotation_keyframes"]
+        ]
     return parsed
 
 

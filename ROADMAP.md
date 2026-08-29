@@ -59,11 +59,14 @@
 3. **多 blend 切换**：当前聊天文件夹的 blend 列表 + 切换自动加载最新 + 手动切换
 4. **存储层重构 + 上传源扁平化**：`exports/<hash>/` 回归纯渲染缓存（不再存 blend）；源 blend 统一——聊天源 `output/<folder>/`（scene_vN 版本化）、上传源 + 保存输出扁平 `upload_output/<时间戳>.blend`；`source` 字段统一（upload=file / chat=folder）；保存 = 新 blend 成为新源（二次编辑不丢）；缓存命中补回源文件
 
-### V5 已知问题（待解决）
+### V5 已知问题
 
-1. **编辑态与保存后不一致**：编辑时镜头变化正确，保存回存后重新打开却不一致
-2. **片段类型误判**：保存后所有片段变复杂段（C），编辑阶段本应判为简单段（S）
-3. **缺手动拖动交互**：镜头只能数值编辑，缺拖动等高效交互（可能后续版本）
+1. ~~**编辑态与保存后不一致**~~ ✅ 已修复：多个根因——TRACK_TO 约束丢失（漏写 orientation_mode）、关键帧残留 BEZIER、C 段被简化（改逐帧复刻）、旧缓存缺 orientation_mode（前后端兜底）、follow/interpolate 段级混用（约束 influence 动画方案）、复杂段朝向 X/Y 互换（`rotation_euler` 按 intrinsic 读写但 Blender 求值是 extrinsic，多轴朝向翻车；保存/导出端对称改为 extrinsic `mathutils.Euler('XYZ')`）
+2. ~~**片段类型误判**~~ ✅ 已修复（BEZIER 残留根因）
+3. **手动拖动交互已移除**：曾实现拖相机箭头改 pose（`CameraEditControls`），但存在 bug——attach/切换段时误触发写回，把「播放头处的实时相机朝向」污染进段数据；本期已砍掉该组件调用，位置/朝向暂靠侧栏数值编辑，拖拽交互留待后续版本重做。
+4. ~~**编辑模式切换清空聊天历史**~~ ✅ 已修复：ChatPanel 在编辑模式下被卸载（`{!editMode && <ChatPanel />}`），消息是 useState 本地状态、卸载即丢失；改为始终挂载 + CSS 隐藏（`(sidebarCollapsed || editMode) ? hidden`）。
+5. ~~**重复选择同一聊天版本下拉消失**~~ ✅ 已修复：`loadShotIntoViewer` 清空 blendVersions，但同一聊天 export_hash 不变，App.tsx 依赖 export_hash 的 useEffect 不重新触发；改为清空后主动 `loadBlendVersions`。
+6. ~~**版本下拉样式不统一**~~ ✅ 已修复：版本选择原为原生 `<select>`（浏览器默认样式），与聊天切换的 HistoryDropdown 风格不一致；新建 BlendVersionDropdown 自定义下拉，复用 HistoryDropdown 的 pill trigger + 深色 menu 样式。
 
 ### V5 扩展（本期不做，后续，按优先级）
 
@@ -71,6 +74,7 @@
 1. 撤销 / 重做
 2. 相机参数编辑（FOV / 景深）
 3. 段的时间拖动
+4. 拖拽 pose 编辑（重做：拖相机箭头改位置/朝向，修复 attach 误触发写回 bug）
 
 **中（自然延伸）**
 4. 删除相机轨道 / 新增相机轨道

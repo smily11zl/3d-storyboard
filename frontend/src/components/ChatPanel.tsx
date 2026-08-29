@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { SessionSummary, ShotSegment } from '../types';
 import { HistoryDropdown } from './HistoryDropdown';
+import { BlendVersionDropdown } from './BlendVersionDropdown';
 import styles from './ChatPanel.module.css';
 
 interface ChatMessage {
@@ -189,6 +190,9 @@ export function ChatPanel() {
       errorMessage: null,
       blendVersions: [],
     });
+    // 主动加载 blend 版本列表：重复点击同一个聊天时 export_hash 不变，
+    // App.tsx 里依赖 export_hash 的 useEffect 不会重新触发，版本下拉会丢失。
+    void useStore.getState().loadBlendVersions(shot.export_hash);
   };
 
   const finishGeneration = async (taskId: string) => {
@@ -386,18 +390,11 @@ export function ChatPanel() {
 
       {shot && blendVersions.length > 0 && (
         <div className={styles.blendBar}>
-          <select
-            className={styles.blendSelect}
-            value={shot.export_hash}
-            onChange={(event) => void switchBlend(event.target.value)}
-            title="Switch blend version"
-          >
-            {blendVersions.map((blend) => (
-              <option key={blend.blend_hash} value={blend.blend_hash}>
-                {blend.filename}
-              </option>
-            ))}
-          </select>
+          <BlendVersionDropdown
+            blendVersions={blendVersions}
+            currentHash={shot.export_hash}
+            onSelect={(blendHash) => void switchBlend(blendHash)}
+          />
         </div>
       )}
 

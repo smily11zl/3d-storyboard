@@ -14,6 +14,16 @@ export interface Pose {
   rotation: [number, number, number];
 }
 
+export interface PositionKeyframe {
+  time: number;
+  position: [number, number, number];
+}
+
+export interface RotationKeyframe {
+  time: number;
+  rotation: [number, number, number];
+}
+
 export interface BlendVersion {
   filename: string;
   version: number;
@@ -50,6 +60,9 @@ export interface ShotSegment {
   interpolation?: SegmentInterpolation;
   /** 编辑态的朝向模式（interpolate=角度 / follow=目标点）。 */
   orientation_mode?: "interpolate" | "follow";
+  /** C 段：完整采样点（保存时逐帧复刻用）。 */
+  position_keyframes?: PositionKeyframe[];
+  rotation_keyframes?: RotationKeyframe[];
 }
 
 export interface ShotMetadata {

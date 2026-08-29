@@ -94,14 +94,9 @@ def export_blend_to_gltf(input_filepath, output_directory):
                     evaluated_camera = camera_object.evaluated_get(depsgraph)
                     rotation_euler = evaluated_camera.matrix_world.to_euler()
                     for axis_index in range(3):
-                        rotation_fcurve = None
-                        for fcurve in action.fcurves:
-                            if (
-                                fcurve.data_path == "rotation_euler"
-                                and fcurve.array_index == axis_index
-                            ):
-                                rotation_fcurve = fcurve
-                                break
+                        rotation_fcurve = action.fcurves.find(
+                            "rotation_euler", index=axis_index
+                        )
                         if rotation_fcurve is None:
                             rotation_fcurve = action.fcurves.new(
                                 data_path="rotation_euler", index=axis_index
@@ -112,6 +107,27 @@ def export_blend_to_gltf(input_filepath, output_directory):
                         rotation_fcurve.keyframe_points[-1].interpolation = "LINEAR"
 
     gltf_filepath = os.path.join(output_directory, "scene.gltf")
+
+    # 解绑相机「直接 action」里的纯 influence 动画，避免 glTF 导出器把它烘焙成
+    # 一条覆盖全时间轴的全局 rotation 动画（cam_01动作.001 之类），叠加污染
+    # 各段已烘焙好的朝向。influence 的效果在上面的烘焙逻辑里已经写进 NLA strip
+    # 的 rotation 关键帧，导出阶段不再需要它；导出后恢复原状。
+    # 注意：只解绑「纯 influence」的直接 action（约束切换动画）；正常的相机
+    # 动画（location/rotation）直接 action 保留，否则会丢失动画。
+    saved_direct_actions = {}
+    for camera_object in bpy.data.objects:
+        if camera_object.type != "CAMERA":
+            continue
+        animation_data = camera_object.animation_data
+        if animation_data is None or animation_data.action is None:
+            continue
+        action = animation_data.action
+        is_pure_influence = bool(action.fcurves) and all(
+            "influence" in fcurve.data_path for fcurve in action.fcurves
+        )
+        if is_pure_influence:
+            saved_direct_actions[camera_object.name] = action
+            animation_data.action = None
 
     # Export to glTF (separate JSON + .bin format)
     try:
@@ -131,7 +147,12 @@ def export_blend_to_gltf(input_filepath, output_directory):
         )
     except Exception as error:
         print(f"ERROR: glTF export failed: {error}", file=sys.stderr)
+        for camera_name, action in saved_direct_actions.items():
+            bpy.data.objects[camera_name].animation_data.action = action
         return False
+    finally:
+        for camera_name, action in saved_direct_actions.items():
+            bpy.data.objects[camera_name].animation_data.action = action
 
     # Verify output files were created
     if not os.path.isfile(gltf_filepath):
@@ -172,8 +193,70 @@ def _action_keyframe_times(action):
     return sorted(times)
 
 
+def _euler_intrinsic_to_quat(rx, ry, rz):
+    """intrinsic XYZ 欧拉 → 四元数：q = qx(rx)·qy(ry)·qz(rz)。
+
+    用于解读前端 THREE.Euler（intrinsic）。注意：Blender rotation_euler
+    （rotation_mode='XYZ'）是 extrinsic（mathutils.Euler('XYZ')，q = qz·qy·qx），
+    两者不同，勿混淆。
+    """
+    import mathutils
+
+    return (
+        mathutils.Quaternion((1, 0, 0), rx)
+        @ mathutils.Quaternion((0, 1, 0), ry)
+        @ mathutils.Quaternion((0, 0, 1), rz)
+    )
+
+
+def _quat_to_euler_intrinsic(quat):
+    """四元数 → intrinsic XYZ 欧拉（旋转矩阵 R = Rx·Ry·Rz 反解）。"""
+    import math
+
+    w, x, y, z = quat.w, quat.x, quat.y, quat.z
+    r00 = 1 - 2 * (y * y + z * z)
+    r01 = 2 * (x * y - w * z)
+    r02 = 2 * (x * z + w * y)
+    r10 = 2 * (x * y + w * z)
+    r11 = 1 - 2 * (x * x + z * z)
+    r12 = 2 * (y * z - w * x)
+    r20 = 2 * (x * z - w * y)
+    r21 = 2 * (y * z + w * x)
+    r22 = 1 - 2 * (x * x + y * y)
+    pitch = math.asin(max(-1.0, min(1.0, r02)))
+    cos_pitch = math.cos(pitch)
+    if abs(cos_pitch) > 1e-6:
+        roll = math.atan2(-r12 / cos_pitch, r22 / cos_pitch)
+        yaw = math.atan2(-r01 / cos_pitch, r00 / cos_pitch)
+    else:
+        roll = 0.0
+        yaw = math.atan2(r10, r11)
+    return (roll, pitch, yaw)
+
+
+def _blender_to_gltf_pose(position, rotation):
+    """Blender Z-up → glTF Y-up 逆映射（保存端 _gltf_to_*_blender 的逆）。
+
+    position：左乘 Rx(-90°)，(x, y, z) → (x, z, -y)。
+    rotation：Blender rotation_euler（extrinsic XYZ，mathutils.Euler('XYZ') 约定）。
+    q_gltf = Rx(-90°) · q_blender，输出 intrinsic 欧拉（前端 THREE 约定）。
+    """
+    import math
+    import mathutils
+
+    x, y, z = position
+    gltf_position = (x, z, -y)
+
+    quat_blender = mathutils.Euler((rotation[0], rotation[1], rotation[2]), 'XYZ').to_quaternion()
+    coordinate_rotation = mathutils.Quaternion((1, 0, 0), -math.pi / 2)  # Rx(-90°)
+    quat_gltf = coordinate_rotation @ quat_blender
+    euler_gltf = _quat_to_euler_intrinsic(quat_gltf)
+    return gltf_position, euler_gltf
+
+
 def _action_pose_at(action, time):
-    """读 action 在某个时刻的 position + rotation（用 F-Curve evaluate 求值）。"""
+    """读 action 在某个时刻的 position + rotation（用 F-Curve evaluate 求值），
+    并把 Blender Z-up 坐标逆映射回 glTF Y-up（与前端编辑态一致）。"""
     position = [0.0, 0.0, 0.0]
     rotation = [0.0, 0.0, 0.0]
     for fcurve in action.fcurves:
@@ -181,7 +264,8 @@ def _action_pose_at(action, time):
             position[fcurve.array_index] = round(fcurve.evaluate(time), 4)
         elif fcurve.data_path == "rotation_euler" and 0 <= fcurve.array_index < 3:
             rotation[fcurve.array_index] = round(fcurve.evaluate(time), 4)
-    return {"position": position, "rotation": rotation}
+    gltf_position, euler_gltf = _blender_to_gltf_pose(position, rotation)
+    return {"position": list(gltf_position), "rotation": list(euler_gltf)}
 
 
 # glTF 原生支持的插值（Blender 名）：LINEAR / CONSTANT(=STEP) / BEZIER(=CUBICSPLINE)
@@ -291,6 +375,59 @@ def _classify_segment(camera_object, action):
     return segment_type, constraint_meta
 
 
+def _orientation_mode(camera_object, start_frame, end_frame, constraint_meta):
+    """朝向驱动方式：读相机 TRACK_TO 约束在该段范围内的 influence。
+
+    influence > 0.5 → follow（约束 lookAt 驱动）；否则 interpolate（关键帧插值）。
+    旧数据（无 influence 动画、约束恒定生效）退化为：有 TRACK_TO 约束 → follow。
+    """
+    rotation_constraints = constraint_meta.get("rotation", [])
+    if not any(entry.get("type") == "TRACK_TO" for entry in rotation_constraints):
+        return "interpolate"
+
+    mid_frame = (start_frame + end_frame) / 2
+    for constraint in camera_object.constraints:
+        if constraint.type != "TRACK_TO":
+            continue
+        if _constraint_influence_at(constraint, mid_frame) > 0.5:
+            return "follow"
+    return "interpolate"
+
+
+def _constraint_influence_at(constraint, frame):
+    """读约束 influence 在指定帧的值（有动画读 fcurve，无动画读常量）。
+
+    约束 influence 的动画存在约束所属对象（相机）的 animation_data 里，
+    data_path 形如 `constraints["约束名"].influence`。
+    """
+    owner = constraint.id_data
+    animation_data = owner.animation_data
+    if animation_data is not None and animation_data.action is not None:
+        fcurve = animation_data.action.fcurves.find(
+            f'constraints["{constraint.name}"].influence'
+        )
+        if fcurve is not None:
+            return fcurve.evaluate(frame)
+    return constraint.influence
+
+
+def _filter_inactive_constraints(constraint_meta, orientation_mode):
+    """interpolate 段的朝向由关键帧驱动，TRACK_TO 约束（influence=0）不生效，从元数据里去掉。
+
+    follow 段保留原样。去掉后若 constraint_meta 为空，返回 None。
+    """
+    if not constraint_meta or orientation_mode != "interpolate":
+        return constraint_meta
+    rotation = constraint_meta.get("rotation", [])
+    remaining_rotation = [entry for entry in rotation if entry.get("type") != "TRACK_TO"]
+    filtered = dict(constraint_meta)
+    if remaining_rotation:
+        filtered["rotation"] = remaining_rotation
+    else:
+        filtered.pop("rotation", None)
+    return filtered if filtered else None
+
+
 def _build_segment(camera_object, action, segment_name, start_frame, end_frame, frames_per_second):
     """构造一个段的 sidecar 数据。"""
     keyframe_times = _action_keyframe_times(action)
@@ -299,6 +436,8 @@ def _build_segment(camera_object, action, segment_name, start_frame, end_frame, 
     start_pose = _action_pose_at(action, keyframe_times[0])
     end_pose = _action_pose_at(action, keyframe_times[-1])
     segment_type, constraint_meta = _classify_segment(camera_object, action)
+    orientation_mode = _orientation_mode(camera_object, start_frame, end_frame, constraint_meta)
+    constraint_meta = _filter_inactive_constraints(constraint_meta, orientation_mode)
     segment = {
         "camera_name": camera_object.name,
         "segment_name": segment_name,
@@ -309,6 +448,7 @@ def _build_segment(camera_object, action, segment_name, start_frame, end_frame, 
         "start_pose": start_pose,
         "end_pose": end_pose,
         "segment_type": segment_type,
+        "orientation_mode": orientation_mode,
         "interpolation": {
             "position": _channel_interpolation(action, "location"),
             "rotation": _channel_interpolation(action, "rotation_euler"),

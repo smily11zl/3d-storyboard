@@ -11,6 +11,7 @@ A web application for viewing Blender 3D storyboard shots directly in the browse
 - **Camera View** — left viewport locked to a scene camera's perspective, with a dropdown to switch between cameras (falls back to a default orbit view when the scene has no cameras)
 - **Free View** — right viewport with free orbit controls, plus a **browse mode** (WASD/QE walk-around camera) and an **edit mode** (click a character, move/rotate it with the W/E gizmo — both viewports stay in sync)
 - **Animation playback** — shared timeline across both viewports: play / pause / scrub, with Space shortcut
+- **Shot editing** — edit mode to adjust camera segments: simple segments (S) are editable (start/end pose + lookAt target), complex segments (C) are view-only; saving writes back to a versioned `scene_vN.blend`, switch between versions from the sidebar dropdown
 - **Cache & dedup** — same file (SHA256 hash) is converted only once; hold `Shift` while uploading to force re-conversion
 - **Spotify dark theme** — UI styled per `ui-design/DESIGN.md`
 
@@ -68,8 +69,9 @@ storyboard-3d-pipeline/
 │   └── tests/             # pytest integration tests
 ├── frontend/
 │   └── src/
-│       ├── components/    # TopBar, Sidebar, ChatPanel, SettingsModal,
-│       │                  # UploadZone, CameraView, FreeView, SceneModel, Timeline
+│       ├── components/    # TopBar, EditToolbar, ChatPanel, HistoryDropdown,
+│       │                  # BlendVersionDropdown, CameraView, FreeView, SceneModel,
+│       │                  # Timeline, EditTimeline, SegmentSidebar, UploadZone, SettingsModal
 │       ├── store.ts       # Zustand state
 │       └── types.ts       # Shot metadata types
 ├── assets/characters/     # Mixamo character library used by generation
@@ -84,6 +86,8 @@ storyboard-3d-pipeline/
 ```
 POST /api/shots?force=true         # Upload .blend, returns shot metadata
 GET  /api/shots/{hash}             # Cached shot metadata
+POST /api/shots/{hash}/edit        # Apply edit-mode changes → new versioned scene_vN.blend
+GET  /api/shots/{hash}/blends      # List blend versions in a shot's folder
 GET  /static/exports/{hash}/*      # Served glTF files
 
 GET/POST /api/settings             # Read / save agent settings (validates DeepSeek key)
@@ -91,6 +95,10 @@ POST /api/generate                 # Create a generation task {description}
 GET  /api/generate/{id}            # Task status (status.json)
 GET  /api/generate/{id}/stream     # SSE stream of the generation process
 POST /api/generate/{id}/stop       # Cancel a running generation
+POST /api/generate/{folder}/reload # Re-convert a chat's source blend → latest shot
+
+GET  /api/sessions                 # Chat history list
+GET  /api/sessions/{id}/messages   # A chat's message history
 ```
 
 ## Testing

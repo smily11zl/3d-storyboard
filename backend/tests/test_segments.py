@@ -103,3 +103,49 @@ def test_interpolation_passthrough():
     }
     result = parse_segments_sidecar(sidecar)
     assert result["segments"][0]["interpolation"] == {"position": "LINEAR", "rotation": "CONSTANT"}
+
+
+class _MockOwner:
+    animation_data = None
+
+
+class _MockConstraint:
+    def __init__(self, type_name, influence=1.0):
+        self.type = type_name
+        self.influence = influence
+        self.name = "mock_track"
+        self.id_data = _MockOwner()
+
+
+class _MockCamera:
+    def __init__(self, constraints):
+        self.constraints = constraints
+
+
+def test_orientation_mode_track_to_is_follow():
+    from backend.export_shot import _orientation_mode
+
+    camera = _MockCamera([_MockConstraint("TRACK_TO", influence=1.0)])
+    meta = {"rotation": [{"type": "TRACK_TO", "target": "target_01"}]}
+    assert _orientation_mode(camera, 1, 72, meta) == "follow"
+
+
+def test_orientation_mode_track_to_zero_influence_is_interpolate():
+    from backend.export_shot import _orientation_mode
+
+    camera = _MockCamera([_MockConstraint("TRACK_TO", influence=0.0)])
+    meta = {"rotation": [{"type": "TRACK_TO", "target": "target_01"}]}
+    assert _orientation_mode(camera, 217, 288, meta) == "interpolate"
+
+
+def test_orientation_mode_no_constraint_is_interpolate():
+    from backend.export_shot import _orientation_mode
+
+    assert _orientation_mode(None, 0, 0, {}) == "interpolate"
+
+
+def test_orientation_mode_non_track_to_is_interpolate():
+    from backend.export_shot import _orientation_mode
+
+    meta = {"rotation": [{"type": "COPY_ROTATION", "target": "t"}]}
+    assert _orientation_mode(None, 0, 0, meta) == "interpolate"

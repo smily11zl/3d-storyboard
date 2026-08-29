@@ -1,6 +1,6 @@
 # V5 任务清单 — 手动编辑镜头段 + 回存 blend
 
-状态: 进行中（切片 1-7 完成，3 个已知问题待修）
+状态: 进行中（切片 1-7 完成，已知问题 1/2/4/5/6 已修复，问题 3 后续版本）
 日期: 2026-08-21
 
 依赖图：
@@ -77,8 +77,17 @@
 - [x] 缓存命中补回源文件（删源重传自动恢复；兼容旧 file/folder 字段）
 - [x] 验证：pytest 64 passed
 
-## 已知问题（待解决）
+## 已知问题
 
-1. **编辑态与保存后不一致**：编辑时看到的镜头变化正确，但保存回存后重新打开，镜头变化与编辑态不一致。
-2. **片段类型误判为复杂段**：保存后的文件所有片段都变成复杂段（C），但编辑阶段这些片段本应符合简单段（S）定义。
-3. **缺手动拖动交互**：镜头目前只能通过数值编辑变化，缺手动拖动等高效交互手段（可能后续版本）。
+1. ~~**编辑态与保存后不一致**~~ ✅ 已修复，定位到多个根因：
+   - TRACK_TO 约束丢失（`export_shot.py` 漏写 `orientation_mode`）
+   - 关键帧插值残留 BEZIER（`apply_edit.py` insert 引用失效）
+   - C 段被简化成 S（保存只写首尾，改为 C 段逐帧复刻完整采样点）
+   - 旧缓存缺 `orientation_mode`（前端显示 follow 但保存默认 interpolate，前后端加兜底推导）
+   - follow/interpolate 段级混用（TRACK_TO 约束是相机级，改为约束 influence 动画 + export 读 influence 判定）
+   - 复杂段朝向 X/Y 互换（`rotation_euler` 按 intrinsic 读写但 Blender 求值是 extrinsic，多轴朝向翻车；保存/导出端对称改为 extrinsic `mathutils.Euler('XYZ')`）
+2. ~~**片段类型误判为复杂段**~~ ✅ 已修复（同 BEZIER 残留根因）
+3. **缺手动拖动交互**：镜头目前只能通过数值编辑变化，缺手动拖动等高效交互手段（后续版本）。
+4. ~~**编辑模式切换清空聊天历史**~~ ✅ 已修复（ChatPanel 编辑模式卸载丢 useState，改始终挂载 + CSS 隐藏）
+5. ~~**重复选择同一聊天版本下拉消失**~~ ✅ 已修复（loadShotIntoViewer 清空 blendVersions 后主动重新加载）
+6. ~~**版本下拉样式不统一**~~ ✅ 已修复（原生 select 改自定义 BlendVersionDropdown，与 HistoryDropdown 同风格）

@@ -114,3 +114,32 @@ def test_fails_on_missing_blend():
         )
         combined_output = result.stdout + result.stderr
         assert len(combined_output) > 0, "Expected error message for missing file"
+
+
+def test_export_skips_pure_influence_direct_action():
+    """含纯 influence 直接 action 的相机 → glTF 不应导出它的烘焙动画。
+
+    方案 A 的约束 influence 动画存在相机「直接 action」里。导出时若不清掉，
+    glTF 导出器会把它烘焙成一条覆盖全时间轴的全局 rotation 动画，叠加污染各段朝向。
+    """
+    fixture_path = os.path.join(FIXTURES_DIR, "fixture_influence.blend")
+    with tempfile.TemporaryDirectory() as output_directory:
+        result = run_export(fixture_path, output_directory)
+        assert result.returncode == 0, (
+            f"Export failed (exit {result.returncode}):\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
+        gltf_path = os.path.join(output_directory, "scene.gltf")
+        with open(gltf_path) as file_handle:
+            gltf_data = json.load(file_handle)
+
+        animation_names = [
+            animation.get("name", "") for animation in gltf_data.get("animations", [])
+        ]
+        assert "CameraInfluenceAction" not in animation_names, (
+            f"纯 influence 直接 action 被错误导出: {animation_names}"
+        )
+        assert "CameraMove" in animation_names, (
+            f"NLA strip 动画缺失: {animation_names}"
+        )

@@ -1,5 +1,6 @@
+import * as THREE from 'three';
 import { create } from 'zustand';
-import type { SessionSummary, ShotMetadata, ShotSegment, BlendVersion, Pose } from './types';
+import type { SessionSummary, ShotMetadata, ShotSegment, BlendVersion, Pose, PositionKeyframe, RotationKeyframe } from './types';
 
 interface StoreState {
   shot: ShotMetadata | null;
@@ -41,6 +42,9 @@ interface StoreState {
   setGltfSegmentPoses: (
     poses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>>,
   ) => void;
+  /** glTF 完整动画 clips（播放层数据引用；保存 C 段时现读完整采样点）。 */
+  gltfAnimations: THREE.AnimationClip[] | null;
+  setGltfAnimations: (animations: THREE.AnimationClip[]) => void;
   saveEdit: () => Promise<void>;
 
   /** blend 版本列表（当前 shot 目录下的 .blend）。 */
@@ -98,10 +102,58 @@ function buildEditingSegments(
     const pose = gltfSegmentPoses[segment.camera_name]?.[segment.segment_name];
     return {
       ...segment,
+      orientation_mode:
+        segment.orientation_mode ??
+        (segment.constraint?.rotation?.length ? 'follow' : 'interpolate'),
       start_pose: pose?.start_pose ?? segment.start_pose,
       end_pose: pose?.end_pose ?? segment.end_pose,
     };
   });
+}
+
+function extractComplexSegmentKeyframes(
+  animations: THREE.AnimationClip[] | null,
+  segmentName: string,
+): { position_keyframes: PositionKeyframe[]; rotation_keyframes: RotationKeyframe[] } | null {
+  if (!animations) return null;
+  const clip = animations.find((animation) => animation.name === segmentName);
+  if (!clip) return null;
+
+  const positionTrack = clip.tracks.find((track) => track.name.endsWith('.position'));
+  const quaternionTrack = clip.tracks.find((track) => track.name.endsWith('.quaternion'));
+
+  const position_keyframes: PositionKeyframe[] = [];
+  if (positionTrack) {
+    for (let index = 0; index < positionTrack.times.length; index++) {
+      position_keyframes.push({
+        time: positionTrack.times[index],
+        position: [
+          positionTrack.values[index * 3],
+          positionTrack.values[index * 3 + 1],
+          positionTrack.values[index * 3 + 2],
+        ],
+      });
+    }
+  }
+
+  const rotation_keyframes: RotationKeyframe[] = [];
+  if (quaternionTrack) {
+    for (let index = 0; index < quaternionTrack.times.length; index++) {
+      const quaternion = new THREE.Quaternion(
+        quaternionTrack.values[index * 4],
+        quaternionTrack.values[index * 4 + 1],
+        quaternionTrack.values[index * 4 + 2],
+        quaternionTrack.values[index * 4 + 3],
+      );
+      const euler = new THREE.Euler().setFromQuaternion(quaternion);
+      rotation_keyframes.push({
+        time: quaternionTrack.times[index],
+        rotation: [euler.x, euler.y, euler.z],
+      });
+    }
+  }
+
+  return { position_keyframes, rotation_keyframes };
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -123,6 +175,7 @@ export const useStore = create<StoreState>((set, get) => ({
   selectedSegment: null,
   editingSegments: null,
   gltfSegmentPoses: {},
+  gltfAnimations: null,
   blendVersions: [],
   targetNodePositions: {},
   characterTransforms: {},
@@ -180,16 +233,26 @@ export const useStore = create<StoreState>((set, get) => ({
         : null,
     })),
   setGltfSegmentPoses: (poses) => set({ gltfSegmentPoses: poses }),
+  setGltfAnimations: (animations) => set({ gltfAnimations: animations }),
   setDirty: (dirty) => set({ dirty: dirty }),
   saveEdit: async () => {
     const state = get();
     const shot = state.shot;
     if (!shot || !state.editingSegments) return;
+    // C 段只读：保存时从播放层（gltfAnimations）现读完整采样点，逐帧复刻。
+    const segments = state.editingSegments.map((segment) => {
+      if (segment.segment_type !== 'C') return segment;
+      const keyframes = extractComplexSegmentKeyframes(
+        state.gltfAnimations,
+        segment.segment_name,
+      );
+      return keyframes ? { ...segment, ...keyframes } : segment;
+    });
     const response = await fetch(`/api/shots/${shot.export_hash}/edit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        segments: state.editingSegments,
+        segments,
         target_positions: state.targetNodePositions,
       }),
     });
@@ -322,6 +385,7 @@ export const useStore = create<StoreState>((set, get) => ({
         end_pose: { position: [...endPose.position], rotation: [...endPose.rotation] },
         segment_type: 'S',
         constraint: lastSegment?.constraint,
+        orientation_mode: lastSegment?.orientation_mode,
       };
       return {
         dirty: true,
