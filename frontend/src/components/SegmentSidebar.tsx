@@ -96,9 +96,10 @@ export function SegmentSidebar() {
   const setSegmentTarget = useStore((state) => state.setSegmentTarget);
   const setOrientationMode = useStore((state) => state.setOrientationMode);
   const setInterpolation = useStore((state) => state.setInterpolation);
-  const setCurrentTime = useStore((state) => state.setCurrentTime);
   const deleteSegment = useStore((state) => state.deleteSegment);
-  const setSegmentDuration = useStore((state) => state.setSegmentDuration);
+  const retimeSegment = useStore((state) => state.retimeSegment);
+  const trimSegment = useStore((state) => state.trimSegment);
+  const setSegmentOriginalDuration = useStore((state) => state.setSegmentOriginalDuration);
 
   if (!selectedSegment) return null;
 
@@ -214,14 +215,42 @@ export function SegmentSidebar() {
             <div className={styles.section}>
               <div className={styles.sectionTitle}>Duration</div>
               <div className={styles.timeRow}>
+                <span>Duration</span>
+                {isSimple ? (
+                  <input
+                    type="number"
+                    className={styles.fieldInput}
+                    value={Number(
+                      (segment.original_duration ?? segment.end_time - segment.start_time).toFixed(2),
+                    )}
+                    step={0.1}
+                    onChange={(event) =>
+                      setSegmentOriginalDuration(
+                        segment.camera_name,
+                        segment.segment_name,
+                        parseFloat(event.target.value) || 0,
+                      )
+                    }
+                  />
+                ) : (
+                  <span className={styles.readonlyValue}>
+                    {(segment.original_duration ?? segment.end_time - segment.start_time).toFixed(2)}s
+                  </span>
+                )}
+              </div>
+              <div className={styles.timeRow}>
                 <span>Start</span>
-                <button
-                  className={styles.frameButton}
-                  onClick={() => setCurrentTime(segment.start_time)}
-                  title="Jump playhead to start"
-                >
-                  {segment.start_time.toFixed(2)}s
-                </button>
+                <input
+                  type="number"
+                  className={styles.fieldInput}
+                  value={Number(segment.start_time.toFixed(2))}
+                  step={0.1}
+                  onChange={(event) => {
+                    const newTime = parseFloat(event.target.value) || 0;
+                    const action = isSimple ? retimeSegment : trimSegment;
+                    action(segment.camera_name, segment.segment_name, 'start', newTime);
+                  }}
+                />
               </div>
               <div className={styles.timeRow}>
                 <span>End</span>
@@ -230,14 +259,19 @@ export function SegmentSidebar() {
                   className={styles.fieldInput}
                   value={Number(segment.end_time.toFixed(2))}
                   step={0.1}
-                  onChange={(event) =>
-                    setSegmentDuration(
-                      segment.camera_name,
-                      segment.segment_name,
-                      parseFloat(event.target.value) || 0,
-                    )
-                  }
+                  onChange={(event) => {
+                    const newTime = parseFloat(event.target.value) || 0;
+                    const action = isSimple ? retimeSegment : trimSegment;
+                    action(segment.camera_name, segment.segment_name, 'end', newTime);
+                  }}
                 />
+              </div>
+              <div className={styles.timeRow}>
+                <span>Effective</span>
+                <span className={styles.readonlyValue}>
+                  {(segment.end_time - segment.start_time).toFixed(2)}s /{' '}
+                  {(segment.original_duration ?? segment.end_time - segment.start_time).toFixed(2)}s
+                </span>
               </div>
             </div>
 

@@ -64,6 +64,8 @@ export interface ShotSegment {
   orientation_mode?: "interpolate" | "follow";
   /** follow 段的 TRACK_TO 目标点位置（glTF Y-up），每段独立；interpolate 段无。 */
   target_position?: [number, number, number];
+  /** 原始时长（秒）：进入编辑态那刻的 end_time - start_time，拖动时长的上限。S 段可改，C 段只读。 */
+  original_duration?: number;
   /** C 段：完整采样点（保存时逐帧复刻用）。 */
   position_keyframes?: PositionKeyframe[];
   rotation_keyframes?: RotationKeyframe[];

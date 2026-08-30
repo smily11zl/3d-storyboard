@@ -247,6 +247,15 @@ function App() {
     () => (gltfOriginal ? cloneGLTF(gltfOriginal) : null),
     [gltfOriginal],
   );
+  // 编辑态独立 scene 副本：新增相机等编辑态独有场景对象加在副本里，查看态用原始副本，彻底隔离。
+  const gltfForCameraEdit = useMemo(
+    () => (editMode && gltfOriginal ? cloneGLTF(gltfOriginal) : null),
+    [editMode, gltfOriginal],
+  );
+  const gltfForFreeEdit = useMemo(
+    () => (editMode && gltfOriginal ? cloneGLTF(gltfOriginal) : null),
+    [editMode, gltfOriginal],
+  );
 
   const hasContent = shot || isLoading;
   const showViewports = hasContent && gltfForCamera && gltfForFree && !sceneLoading;
@@ -274,8 +283,8 @@ function App() {
           <div className={styles.editBody}>
             {showViewports && (
               <div className={styles.viewportArea}>
-                <CameraView gltfData={gltfForCamera} />
-                <FreeView gltfData={gltfForFree} />
+                <CameraView gltfData={gltfForCamera} editGltfData={gltfForCameraEdit} />
+                <FreeView gltfData={gltfForFree} editGltfData={gltfForFreeEdit} />
               </div>
             )}
             {editMode && <SegmentSidebar />}

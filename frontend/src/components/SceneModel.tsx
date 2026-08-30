@@ -25,7 +25,58 @@ function applySegmentToClip(
   segment: ShotSegment,
   instanceLabel: string,
 ): void {
-  if (segment.segment_type === 'C') return;
+  if (segment.segment_type === 'C') {
+    // C 段：用完整采样 keyframes（shift 已平移 time）按当前段范围过滤重建 clip——非破坏性，拖回来能恢复被裁的帧。
+    const positionKeyframes = segment.position_keyframes;
+    const rotationKeyframes = segment.rotation_keyframes;
+    if (positionKeyframes && positionKeyframes.length > 0) {
+      const inRange = (keyframe: { time: number }) =>
+        keyframe.time >= segment.start_time && keyframe.time <= segment.end_time;
+      const filteredPosition = positionKeyframes.filter(inRange);
+      const filteredRotation = (rotationKeyframes ?? []).filter(inRange);
+      if (filteredPosition.length === 0) {
+        // 段区间与采样范围无交集（理论上被 clamp 挡住，防御性兜底）：保留原 clip，不崩溃。
+        return;
+      }
+      const newTracks: THREE.KeyframeTrack[] = [];
+      newTracks.push(
+        new THREE.VectorKeyframeTrack(
+          `${segment.camera_name}.position`,
+          filteredPosition.map((keyframe) => keyframe.time),
+          filteredPosition.flatMap((keyframe) => keyframe.position),
+        ),
+      );
+      if (filteredRotation.length > 0) {
+        const quaternions: number[] = [];
+        for (const keyframe of filteredRotation) {
+          const quaternion = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(keyframe.rotation[0], keyframe.rotation[1], keyframe.rotation[2], 'XYZ'),
+          );
+          quaternions.push(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+        }
+        newTracks.push(
+          new THREE.QuaternionKeyframeTrack(
+            `${segment.camera_name}.quaternion`,
+            filteredRotation.map((keyframe) => keyframe.time),
+            quaternions,
+          ),
+        );
+      }
+      clip.tracks = newTracks;
+      clip.duration = segment.end_time;
+      return;
+    }
+    // fallback：无 keyframes 时，平移原始 clip 的 times（shift）
+    const originalStart = Math.min(...clip.tracks.flatMap((track) => Array.from(track.times)));
+    const delta = segment.start_time - originalStart;
+    if (delta !== 0) {
+      for (const track of clip.tracks) {
+        track.times = track.times.map((time) => time + delta);
+      }
+      clip.duration += delta;
+    }
+    return;
+  }
 
   // 诊断：输出重建该段用的完整基础配置数据（带实例标识 + JSON 纯文本，便于直接复制）
   console.log(
@@ -118,6 +169,8 @@ function applySegmentToClip(
   }
 
   clip.tracks = newTracks;
+  // 同步 clip 时长到段的新 end_time，否则拖长后 mixer 采样到旧 duration 就停（shift/retime 后动画不动）。
+  clip.duration = endTime;
 }
 
 /** 按播放头时间调度各段 action 的 weight（首/末段边界开放，按相机分组）。 */
@@ -161,7 +214,12 @@ function scheduleSegmentWeights(
     const isFirstSegment = segment.start_time === cameraStart;
     const isLastSegment = segment.end_time === cameraEnd;
     const lowerBound = isFirstSegment ? -Infinity : segment.start_time;
-    const upperBound = isLastSegment ? Infinity : segment.end_time;
+    // 非末段：上界延伸到「下一个段的 start_time」，使段间空白（gap）保持本段 weight=1，
+    // 由 clampWhenFinished 停在本段末尾画面（而不是掉回 bind pose）。
+    const nextSegment = cameraList
+      .filter((item) => item.start_time >= segment.end_time && item.segment_name !== segment.segment_name)
+      .sort((a, b) => a.start_time - b.start_time)[0];
+    const upperBound = isLastSegment ? Infinity : (nextSegment ? nextSegment.start_time : segment.end_time);
     const isActive = mixer.time >= lowerBound && mixer.time < upperBound;
     action.weight = isActive ? 1 : 0;
     action.enabled = true;
@@ -177,8 +235,43 @@ interface SceneModelProperties {
 export function SceneModel({ gltfData, cameraName, lockedCamera }: SceneModelProperties) {
   const editMode = useStore((state) => state.editMode);
   const editingSegments = useStore((state) => state.editingSegments);
+  const editingCameras = useStore((state) => state.editingCameras);
   // 所有相机节点名（用于区分「相机段 clip」与「角色骨骼动画 clip」），由 configureMixerActions 收集
   const cameraNodeNamesRef = useRef<Set<string>>(new Set());
+
+  // 编辑态同步相机节点：新增相机 → 动态创建节点；删除相机（原始或新增）→ 移除节点。
+  // 编辑态传入的是独立 scene 副本，删/建都在副本里，退出编辑态副本整体丢弃。
+  useEffect(() => {
+    if (!editMode || !gltfData.scene) return;
+    const cameras = useStore.getState().editingCameras;
+    if (!cameras) return;
+
+    const cameraNames = new Set(cameras.map((camera) => camera.camera_name));
+
+    // 1. 创建新增相机的节点（相机有、scene 没有）
+    const existing = new Set<string>();
+    gltfData.scene.traverse((node) => {
+      if ((node as THREE.PerspectiveCamera).isCamera && node.name) existing.add(node.name);
+    });
+    for (const name of cameraNames) {
+      if (existing.has(name)) continue;
+      const camera = new THREE.PerspectiveCamera();
+      camera.name = name;
+      gltfData.scene.add(camera);
+    }
+
+    // 2. 删除「相机列表里已没有的」节点（删除相机轴后，原始相机和动态节点一并移除）
+    const toRemove: THREE.Object3D[] = [];
+    gltfData.scene.traverse((node) => {
+      if ((node as THREE.PerspectiveCamera).isCamera && node.name) {
+        if (!cameraNames.has(node.name)) toRemove.push(node);
+      }
+    });
+    for (const node of toRemove) {
+      gltfData.scene.remove(node);
+    }
+    // 无需 cleanup：编辑态传入的是独立 scene 副本，退出编辑态副本整体丢弃，动态节点随副本一起回收。
+  }, [editMode, gltfData.scene, editingCameras]);
 
   // 编辑态：深拷贝 clips 作为编辑副本。这和「切换 blend 换一份 clips」是同一件事——
   // 只是喂给 useAnimations 的 clips 不同，mixer / 每帧驱动 / 配置全部复用，不再新建 mixer。

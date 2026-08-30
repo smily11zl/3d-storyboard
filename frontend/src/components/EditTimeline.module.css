@@ -3,6 +3,8 @@
   background: #121212;
   display: flex;
   width: 100%;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .leftControls {
@@ -21,6 +23,15 @@
   display: flex;
   flex-direction: column;
   position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.timelineContent {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
 }
 
 .playButton {
@@ -44,9 +55,30 @@
 
 .trackArea {
   position: relative;
-  max-height: 240px;
+  max-height: 143px;
   overflow-y: auto;
+  overflow-x: clip;
   padding: 8px 8px 0 0;
+}
+
+.effectiveHighlight {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.05);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.effectiveMark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #ffffff;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 2;
 }
 
 .playhead {
@@ -141,9 +173,48 @@
   background: #333333;
 }
 
+.deleteCameraButton {
+  background: #252525;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  color: #b3b3b3;
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-right: 4px;
+  padding: 0;
+}
+
+.deleteCameraButton:hover {
+  color: #ff6b6b;
+  background: #333333;
+}
+
+.addCameraButton {
+  position: relative;
+  z-index: 5;
+  background: #252525;
+  border: 1px solid #4a4a4a;
+  border-radius: 4px;
+  color: #b3b3b3;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 10px;
+  margin: 8px 0;
+  align-self: flex-start;
+}
+
+.addCameraButton:hover {
+  color: #ffffff;
+  background: #333333;
+}
+
 .trackLane {
   position: relative;
-  flex: 1;
+  flex: 0 0 auto;
   height: 100%;
   background: #181818;
   border-radius: 4px;
@@ -163,7 +234,52 @@
   font-weight: 700;
   color: #121212;
   line-height: 22px;
-  cursor: pointer;
+  cursor: grab;
+  z-index: 4;
+}
+
+.segmentHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.segmentHandleLeft {
+  left: 0;
+}
+
+.segmentHandleRight {
+  right: 0;
+}
+
+.segmentHandle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  background: #ffffff;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.segmentHandleLeft::after {
+  left: 0;
+}
+
+.segmentHandleRight::after {
+  right: 0;
+}
+
+.segmentBlock:hover .segmentHandle::after {
+  opacity: 0.35;
+}
+
+.segmentHandle:hover::after {
+  opacity: 1;
 }
 
 .segmentSimple {
@@ -182,19 +298,19 @@
 
 .timeScale {
   display: flex;
-  width: 100%;
+  width: max-content;
   height: 20px;
   border-top: 1px solid #4d4d4d;
 }
 
 .timeScaleSpacer {
-  width: 154px;
+  width: 178px;
   flex-shrink: 0;
 }
 
 .timeScaleRuler {
   position: relative;
-  flex: 1;
+  flex: 0 0 auto;
   min-width: 0;
   cursor: pointer;
 }

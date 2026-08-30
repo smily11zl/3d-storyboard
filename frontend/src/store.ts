@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { create } from 'zustand';
-import type { SessionSummary, ShotMetadata, ShotSegment, BlendVersion, Pose, PositionKeyframe, RotationKeyframe } from './types';
+import type { SessionSummary, ShotMetadata, ShotSegment, BlendVersion, Pose, PositionKeyframe, RotationKeyframe, CameraInfo } from './types';
+import { clampSegmentTimes } from './lib/segmentTiming';
 
 interface StoreState {
   shot: ShotMetadata | null;
@@ -37,6 +38,8 @@ interface StoreState {
 
   /** 编辑态的段副本（进入编辑时深拷贝 shot.segments，编辑直接改副本，保存写回，放弃丢弃）。 */
   editingSegments: ShotSegment[] | null;
+  /** 编辑态相机列表（含增删的相机轴）；null 表示未进入编辑态，回退 shot.cameras。 */
+  editingCameras: CameraInfo[] | null;
   /** 从 glTF clips 预计算的每段 pose（glTF Y-up 坐标），编辑态用它做编辑载体。 */
   gltfSegmentPoses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>>;
   setGltfSegmentPoses: (
@@ -71,6 +74,18 @@ interface StoreState {
   /** Change a segment's end time (duration). */
   setSegmentDuration: (cameraName: string, segmentName: string, endTime: number) => void;
 
+  /** 段拖动：整体平移（shift）、S 段拖边缘（re-time）、C 段拖边缘（trim）。 */
+  shiftSegment: (cameraName: string, segmentName: string, deltaTime: number) => void;
+  retimeSegment: (cameraName: string, segmentName: string, which: 'start' | 'end', newTime: number) => void;
+  trimSegment: (cameraName: string, segmentName: string, which: 'start' | 'end', newTime: number) => void;
+  /** 改段的原始时长上限（Duration）。 */
+  setSegmentOriginalDuration: (cameraName: string, segmentName: string, duration: number) => void;
+
+  /** 新增相机轴（机位）：新建 cam_0N + 初始 3s 段 + 自动选中。 */
+  addCamera: () => void;
+  /** 删除相机轴：删除该相机的所有段；删除活跃相机则切到剩余第一个。 */
+  deleteCamera: (cameraName: string) => void;
+
   /** glTF node positions by name (for resolving TRACK_TO target positions). */
   targetNodePositions: Record<string, [number, number, number]>;
   setTargetNodePositions: (positions: Record<string, [number, number, number]>) => void;
@@ -101,6 +116,7 @@ function buildEditingSegments(
   gltfSegmentPoses: Record<string, Record<string, { start_pose: Pose; end_pose: Pose }>>,
   segmentTargets: Record<string, Record<string, [number, number, number]>>,
   targetNodePositions: Record<string, [number, number, number]>,
+  gltfAnimations: THREE.AnimationClip[] | null,
 ): ShotSegment[] {
   return segments.map((segment) => {
     const pose = gltfSegmentPoses[segment.camera_name]?.[segment.segment_name];
@@ -109,14 +125,21 @@ function buildEditingSegments(
     const targetPosition =
       segmentTargets[segment.camera_name]?.[segment.segment_name] ??
       (targetName ? targetNodePositions[targetName] : undefined);
+    // C 段：进入编辑态就现读完整采样点（keyframes），拖动/裁剪/平移都作用在 keyframes 上
+    const complexKeyframes =
+      segment.segment_type === 'C'
+        ? extractComplexSegmentKeyframes(gltfAnimations, segment.segment_name)
+        : null;
     return {
       ...segment,
+      ...(complexKeyframes ? complexKeyframes : {}),
       orientation_mode:
         segment.orientation_mode ??
         (segment.constraint?.rotation?.length ? 'follow' : 'interpolate'),
       start_pose: pose?.start_pose ?? segment.start_pose,
       end_pose: pose?.end_pose ?? segment.end_pose,
       ...(targetPosition ? { target_position: targetPosition } : {}),
+      original_duration: segment.original_duration ?? (segment.end_time - segment.start_time),
     };
   });
 }
@@ -184,6 +207,7 @@ export const useStore = create<StoreState>((set, get) => ({
   dirty: false,
   selectedSegment: null,
   editingSegments: null,
+  editingCameras: null,
   gltfSegmentPoses: {},
   segmentTargets: {},
   gltfAnimations: null,
@@ -248,12 +272,14 @@ export const useStore = create<StoreState>((set, get) => ({
       editMode: editing,
       dirty: false,
       selectedSegment: null,
+      editingCameras: editing ? (state.shot?.cameras ?? []) : null,
       editingSegments: editing
         ? buildEditingSegments(
             state.shot?.segments ?? [],
             state.gltfSegmentPoses,
             state.segmentTargets,
             state.targetNodePositions,
+            state.gltfAnimations,
           )
         : null,
     })),
@@ -264,14 +290,16 @@ export const useStore = create<StoreState>((set, get) => ({
     const state = get();
     const shot = state.shot;
     if (!shot || !state.editingSegments) return;
-    // C 段只读：保存时从播放层（gltfAnimations）现读完整采样点，逐帧复刻。
+    // C 段 keyframes 完整保留（非破坏性），保存前按段范围裁到 [start_time, end_time] 再传后端。
     const segments = state.editingSegments.map((segment) => {
       if (segment.segment_type !== 'C') return segment;
-      const keyframes = extractComplexSegmentKeyframes(
-        state.gltfAnimations,
-        segment.segment_name,
-      );
-      return keyframes ? { ...segment, ...keyframes } : segment;
+      const inRange = (keyframe: { time: number }) =>
+        keyframe.time >= segment.start_time && keyframe.time <= segment.end_time;
+      return {
+        ...segment,
+        position_keyframes: segment.position_keyframes?.filter(inRange),
+        rotation_keyframes: segment.rotation_keyframes?.filter(inRange),
+      };
     });
     const response = await fetch(`/api/shots/${shot.export_hash}/edit`, {
       method: 'POST',
@@ -414,6 +442,7 @@ export const useStore = create<StoreState>((set, get) => ({
         orientation_mode: lastSegment?.orientation_mode,
         // 继承上一段的 target 位置（follow 段），否则新段是 follow 但无 target，朝向退化成 identity（rotation 0）
         target_position: lastSegment?.target_position ? [...lastSegment.target_position] : undefined,
+        original_duration: 3,
       };
       return {
         dirty: true,
@@ -446,6 +475,126 @@ export const useStore = create<StoreState>((set, get) => ({
             ? { ...segment, end_time: endTime }
             : segment,
         ),
+      };
+    }),
+  shiftSegment: (cameraName, segmentName, deltaTime) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      return {
+        dirty: true,
+        editingSegments: state.editingSegments.map((segment) => {
+          if (segment.camera_name !== cameraName || segment.segment_name !== segmentName) return segment;
+          const { start_time, end_time } = clampSegmentTimes(
+            segment, state.editingSegments!, 'shift', deltaTime, state.framesPerSecond,
+          );
+          // C 段：烘焙关键帧的 time 跟着整体平移（保存后 blend 关键帧也正确）
+          const actualDelta = start_time - segment.start_time;
+          const position_keyframes = segment.position_keyframes
+            ? segment.position_keyframes.map((keyframe) => ({ ...keyframe, time: keyframe.time + actualDelta }))
+            : undefined;
+          const rotation_keyframes = segment.rotation_keyframes
+            ? segment.rotation_keyframes.map((keyframe) => ({ ...keyframe, time: keyframe.time + actualDelta }))
+            : undefined;
+          return { ...segment, start_time, end_time, position_keyframes, rotation_keyframes };
+        }),
+      };
+    }),
+  retimeSegment: (cameraName, segmentName, which, newTime) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      return {
+        dirty: true,
+        editingSegments: state.editingSegments.map((segment) => {
+          if (segment.camera_name !== cameraName || segment.segment_name !== segmentName) return segment;
+          const { start_time, end_time } = clampSegmentTimes(
+            segment, state.editingSegments!, which, newTime, state.framesPerSecond,
+          );
+          return { ...segment, start_time, end_time };
+        }),
+      };
+    }),
+  trimSegment: (cameraName, segmentName, which, newTime) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      return {
+        dirty: true,
+        editingSegments: state.editingSegments.map((segment) => {
+          if (segment.camera_name !== cameraName || segment.segment_name !== segmentName) return segment;
+          const { start_time, end_time } = clampSegmentTimes(
+            segment, state.editingSegments!, which, newTime, state.framesPerSecond,
+          );
+          // 非破坏性：keyframes 保留完整采样，裁剪只改时间段；渲染/保存时按段范围裁（拖回来能恢复）
+          return { ...segment, start_time, end_time };
+        }),
+      };
+    }),
+  setSegmentOriginalDuration: (cameraName, segmentName, duration) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      return {
+        dirty: true,
+        editingSegments: state.editingSegments.map((segment) =>
+          segment.camera_name === cameraName && segment.segment_name === segmentName
+            ? { ...segment, original_duration: Math.max(1, duration) }
+            : segment,
+        ),
+      };
+    }),
+  addCamera: () =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      const existingNames = new Set(
+        (state.editingCameras ?? []).map((camera) => camera.camera_name),
+      );
+      let maxN = 0;
+      for (const name of existingNames) {
+        const match = /^cam_(\d+)$/.exec(name);
+        if (match) maxN = Math.max(maxN, parseInt(match[1], 10));
+      }
+      const cameraName = `cam_${String(maxN + 1).padStart(2, '0')}`;
+      const segmentName = `${cameraName}_seg_01`;
+      const newSegment: ShotSegment = {
+        camera_name: cameraName,
+        segment_name: segmentName,
+        start_time: 0,
+        end_time: 3,
+        start_pose: { position: [0, 0, 0], rotation: [0, 0, 0] },
+        end_pose: { position: [0, 0, 0], rotation: [0, 0, 0] },
+        segment_type: 'S',
+        orientation_mode: 'interpolate',
+        original_duration: 3,
+      };
+      return {
+        dirty: true,
+        activeCameraName: cameraName,
+        selectedSegment: { camera_name: cameraName, segment_name: segmentName },
+        editingCameras: [...(state.editingCameras ?? []), { camera_name: cameraName }],
+        editingSegments: [...state.editingSegments, newSegment],
+      };
+    }),
+  deleteCamera: (cameraName) =>
+    set((state) => {
+      if (!state.editingSegments) return {};
+      const remaining = state.editingSegments.filter(
+        (segment) => segment.camera_name !== cameraName,
+      );
+      let activeCameraName = state.activeCameraName;
+      if (state.activeCameraName === cameraName) {
+        const remainingCameras = Array.from(
+          new Set(remaining.map((segment) => segment.camera_name)),
+        );
+        activeCameraName = remainingCameras[0] ?? null;
+      }
+      const selectedSegment =
+        state.selectedSegment?.camera_name === cameraName ? null : state.selectedSegment;
+      return {
+        dirty: true,
+        activeCameraName,
+        selectedSegment,
+        editingCameras: (state.editingCameras ?? []).filter(
+          (camera) => camera.camera_name !== cameraName,
+        ),
+        editingSegments: remaining,
       };
     }),
   setActiveCamera: (cameraName) => set({ activeCameraName: cameraName }),

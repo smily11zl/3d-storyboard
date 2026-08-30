@@ -10,15 +10,19 @@ import styles from './CameraView.module.css';
 
 interface CameraViewProperties {
   gltfData: GLTF;
+  editGltfData?: GLTF | null;
 }
 
-export function CameraView({ gltfData }: CameraViewProperties) {
+export function CameraView({ gltfData, editGltfData }: CameraViewProperties) {
   const shot = useStore((state) => state.shot);
   const activeCameraName = useStore((state) => state.activeCameraName);
   const editMode = useStore((state) => state.editMode);
   const cameras = shot?.cameras ?? [];
 
   if (!shot) return null;
+
+  // 编辑态用独立 scene 副本（新增相机等编辑态独有对象加在副本），查看态用原始副本。
+  const activeGltf = editMode && editGltfData ? editGltfData : gltfData;
 
   return (
     <div className={styles.panel}>
@@ -51,7 +55,7 @@ export function CameraView({ gltfData }: CameraViewProperties) {
           </Environment>
           <Suspense fallback={null}>
             <SceneModel
-              gltfData={gltfData}
+              gltfData={activeGltf}
               cameraName={activeCameraName}
               lockedCamera
             />

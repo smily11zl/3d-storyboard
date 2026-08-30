@@ -11,12 +11,14 @@ import { SceneModel } from './SceneModel';
 import { CameraIndicator } from './CameraIndicator';
 import { SelectionControls } from './SelectionControls';
 import { BrowseControls } from './BrowseControls';
+import { useStore } from '../store';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as THREE from 'three';
 import styles from './FreeView.module.css';
 
 interface FreeViewProperties {
   gltfData: GLTF;
+  editGltfData?: GLTF | null;
 }
 
 /** Reads the orbit camera's azimuth/polar angles every frame and writes
@@ -40,13 +42,17 @@ function AngleTracker({ displayReference }: { displayReference: React.RefObject<
   return <OrbitControls ref={controlsReference} makeDefault />;
 }
 
-export function FreeView({ gltfData }: FreeViewProperties) {
+export function FreeView({ gltfData, editGltfData }: FreeViewProperties) {
   const angleDisplayReference = useRef<HTMLSpanElement>(null);
   const transformInfoReference = useRef<HTMLSpanElement>(null);
   const [selectedObject, setSelectedObject] = useState<THREE.Object3D | null>(null);
   const [transformMode, setTransformMode] = useState<'translate' | 'rotate'>('translate');
   // 'browse' = game-style camera movement (WASD+QE); 'edit' = character gizmo (W/E)
   const [viewMode, setViewMode] = useState<'browse' | 'edit'>('browse');
+  const editMode = useStore((state) => state.editMode);
+
+  // 编辑态用独立 scene 副本，查看态用原始副本（新增相机等编辑态独有对象加在副本）。
+  const activeGltf = editMode && editGltfData ? editGltfData : gltfData;
 
   // Tab toggles between browse and edit modes
   useEffect(() => {
@@ -146,15 +152,15 @@ export function FreeView({ gltfData }: FreeViewProperties) {
                 floor. A second grid at y=0 caused z-fighting flicker while
                 orbiting. */}
             <SceneModel
-              gltfData={gltfData}
+              gltfData={activeGltf}
               cameraName={null}
               lockedCamera={false}
             />
             {/* Blender-style camera wireframes, follow camera animation */}
-            <CameraIndicator gltfData={gltfData} />
+            <CameraIndicator gltfData={activeGltf} />
             <AngleTracker displayReference={angleDisplayReference} />
             <SelectionControls
-              gltfData={gltfData}
+              gltfData={activeGltf}
               selectedObject={selectedObject}
               onSelect={setSelectedObject}
               transformMode={transformMode}

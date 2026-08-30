@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { ShotSegment } from '../types';
+import { PX_PER_SECOND, TIMELINE_TOTAL, effectiveEnd, hitZone, segmentPixels } from '../lib/timeline';
 import styles from './EditTimeline.module.css';
 
 interface ContextMenuState {
@@ -10,8 +11,8 @@ interface ContextMenuState {
   y: number;
 }
 
-/** 标签列宽度：眼睛(20) + 相机名(110) + 加段按钮(20+4)。 */
-const LABEL_WIDTH = 154;
+/** 标签列宽度（box-sizing:border-box）：眼睛(20) + 相机名(110) + 加段按钮(20+4) + 删相机按钮(20+4)。 */
+const LABEL_WIDTH = 178;
 
 /** 编辑态底部时间轴：左侧播放控制 + 时间刻度 + 段轨道 + 播放头（竖线 + 三角形）。 */
 export function EditTimeline() {
@@ -22,39 +23,28 @@ export function EditTimeline() {
   const setSelectedSegment = useStore((state) => state.setSelectedSegment);
   const addSegment = useStore((state) => state.addSegment);
   const deleteSegment = useStore((state) => state.deleteSegment);
+  const shiftSegment = useStore((state) => state.shiftSegment);
+  const retimeSegment = useStore((state) => state.retimeSegment);
+  const trimSegment = useStore((state) => state.trimSegment);
+  const addCamera = useStore((state) => state.addCamera);
+  const deleteCamera = useStore((state) => state.deleteCamera);
   const isPlaying = useStore((state) => state.isPlaying);
   const setPlaying = useStore((state) => state.setPlaying);
   const activeCameraName = useStore((state) => state.activeCameraName);
   const setActiveCamera = useStore((state) => state.setActiveCamera);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const rulerReference = useRef<HTMLDivElement | null>(null);
-  const [rulerWidth, setRulerWidth] = useState(0);
   const editingSegments = useStore((state) => state.editingSegments);
+  const editingCameras = useStore((state) => state.editingCameras);
   const segments = editingSegments ?? shot?.segments ?? [];
-  const duration =
-    editingSegments && editingSegments.length > 0
-      ? Math.max(shot?.duration_seconds ?? 0, ...editingSegments.map((s) => s.end_time))
-      : (shot?.duration_seconds ?? 0);
-  const cameras = shot?.cameras ?? [];
+  // 时间轴固定 10 分钟总长度，段按比例排布
+  const duration = TIMELINE_TOTAL;
+  // 有效总时长 = 所有段的最大 end_time
+  const effective = effectiveEnd(segments);
+  const cameras = editingCameras ?? shot?.cameras ?? [];
 
-  // 无段相机补虚拟整段（与 SegmentList 一致）
-  const allSegments = useMemo(() => {
-    const result: ShotSegment[] = [...segments];
-    const segmentedCameraNames = new Set(segments.map((segment) => segment.camera_name));
-    for (const camera of cameras) {
-      if (segmentedCameraNames.has(camera.camera_name)) continue;
-      result.push({
-        camera_name: camera.camera_name,
-        segment_name: `${camera.camera_name}_full`,
-        start_time: 0,
-        end_time: duration,
-        start_pose: { position: [0, 0, 0], rotation: [0, 0, 0] },
-        end_pose: { position: [0, 0, 0], rotation: [0, 0, 0] },
-        segment_type: 'S',
-      });
-    }
-    return result;
-  }, [segments, cameras, duration]);
+  // 无段相机不补虚拟整段：删除完所有段后时间轴为空，用户可通过「+」按钮重新加段。
+  const allSegments = segments;
 
   // 右键菜单：点击任意处关闭
   useEffect(() => {
@@ -83,33 +73,19 @@ export function EditTimeline() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // 测量刻度区宽度（播放头 left 用像素计算，避免 CSS calc 百分比乘数字的兼容问题）
-  useEffect(() => {
-    const measure = () => {
-      if (rulerReference.current) {
-        const rect = rulerReference.current.getBoundingClientRect();
-        setRulerWidth(rect.width);
-      }
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [duration]);
-
   if (duration <= 0) return null;
 
-  const playheadPercent = (currentTime / duration) * 100;
-  const playheadLeft = LABEL_WIDTH + (rulerWidth * playheadPercent) / 100;
+  const playheadLeft = LABEL_WIDTH + currentTime * PX_PER_SECOND;
 
   // 播放头拖动/点击：在时间刻度轴上操作（拖动三角形 + 点击刻度轴）
   const handleTimelineMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
     const ruler = rulerReference.current;
     if (!ruler) return;
+    event.preventDefault();
     setPlaying(false);
     const rect = ruler.getBoundingClientRect();
     const updateTime = (clientX: number) => {
-      const ratio = (clientX - rect.left) / rect.width;
-      const target = Math.max(0, Math.min(duration, ratio * duration));
+      const target = Math.max(0, Math.min(duration, (clientX - rect.left) / PX_PER_SECOND));
       setCurrentTime(target);
     };
     updateTime(event.clientX);
@@ -136,9 +112,45 @@ export function EditTimeline() {
     setContextMenu({ camera_name, segment_name, x: event.clientX, y: event.clientY });
   };
 
+  // 段拖动：中段整体平移（shift）、两端边缘改时长（S 段 re-time / C 段 trim）
+  const handleSegmentMouseDown = (event: React.MouseEvent<HTMLDivElement>, segment: ShotSegment) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const zone = hitZone(event.clientX - rect.left, rect.width);
+    let lastClientX = event.clientX;
+    const cameraName = segment.camera_name;
+    const segmentName = segment.segment_name;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaPx = moveEvent.clientX - lastClientX;
+      lastClientX = moveEvent.clientX;
+      const deltaSec = deltaPx / PX_PER_SECOND;
+      if (zone === 'shift') {
+        shiftSegment(cameraName, segmentName, deltaSec);
+        return;
+      }
+      const editing = useStore.getState().editingSegments;
+      const current = editing?.find(
+        (candidate) =>
+          candidate.camera_name === cameraName && candidate.segment_name === segmentName,
+      );
+      if (!current) return;
+      const newTime =
+        zone === 'start' ? current.start_time + deltaSec : current.end_time + deltaSec;
+      const action = current.segment_type === 'C' ? trimSegment : retimeSegment;
+      action(cameraName, segmentName, zone, newTime);
+    };
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
   // 时间刻度（每 1 秒一个，最多约 10 个）
-  const tickCount = Math.min(10, Math.max(2, Math.floor(duration)));
-  const ticks = Array.from({ length: tickCount + 1 }, (_, index) => (index / tickCount) * duration);
+  const ticks = Array.from({ length: Math.floor(duration) + 1 }, (_, index) => index);
 
   return (
     <div className={styles.container}>
@@ -153,6 +165,19 @@ export function EditTimeline() {
         </button>
       </div>
       <div className={styles.timelineBody}>
+        <div
+          className={styles.timelineContent}
+          style={{ width: `${LABEL_WIDTH + TIMELINE_TOTAL * PX_PER_SECOND}px` }}
+        >
+        <div
+          className={styles.effectiveHighlight}
+          style={{ left: `${LABEL_WIDTH}px`, width: `${effective * PX_PER_SECOND}px` }}
+        />
+        <div
+          className={styles.effectiveMark}
+          style={{ left: `${LABEL_WIDTH + effective * PX_PER_SECOND}px` }}
+          title={`Effective total duration ${effective.toFixed(2)}s`}
+        />
         <div className={styles.playhead} style={{ left: `${playheadLeft}px` }}>
           <div className={styles.playheadLine} />
           <div
@@ -185,7 +210,22 @@ export function EditTimeline() {
               >
                 +
               </button>
-              <div className={styles.trackLane}>
+              <button
+                className={styles.deleteCameraButton}
+                onClick={() => {
+                  if (window.confirm(`Delete camera "${camera.camera_name}" and all its segments?`)) {
+                    deleteCamera(camera.camera_name);
+                  }
+                }}
+                title={`Delete camera ${camera.camera_name}`}
+                aria-label={`Delete camera ${camera.camera_name}`}
+              >
+                ✕
+              </button>
+              <div
+                className={styles.trackLane}
+                style={{ width: `${TIMELINE_TOTAL * PX_PER_SECOND}px` }}
+              >
                 {allSegments
                   .filter((segment) => segment.camera_name === camera.camera_name)
                   .map((segment) => {
@@ -199,18 +239,20 @@ export function EditTimeline() {
                           segment.segment_type === 'S' ? styles.segmentSimple : styles.segmentComplex
                         } ${isSelected ? styles.segmentSelected : ''}`}
                         style={{
-                          left: `${(segment.start_time / duration) * 100}%`,
-                          width: `${((segment.end_time - segment.start_time) / duration) * 100}%`,
+                          left: `${segmentPixels(segment.start_time, segment.end_time).leftPx}px`,
+                          width: `${segmentPixels(segment.start_time, segment.end_time).widthPx}px`,
                         }}
                         title={`${segment.segment_name} · ${
                           segment.segment_type === 'S' ? 'Simple' : 'Complex'
                         }`}
-                        onMouseDown={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => handleSegmentMouseDown(event, segment)}
                         onClick={() => handleSegmentClick(segment.camera_name, segment.segment_name)}
                         onContextMenu={(event) =>
                           handleSegmentContextMenu(event, segment.camera_name, segment.segment_name)
                         }
                       >
+                        <div className={`${styles.segmentHandle} ${styles.segmentHandleLeft}`} />
+                        <div className={`${styles.segmentHandle} ${styles.segmentHandleRight}`} />
                         {segment.segment_name}
                       </div>
                     );
@@ -218,6 +260,14 @@ export function EditTimeline() {
               </div>
             </div>
           ))}
+          <button
+            className={styles.addCameraButton}
+            onClick={addCamera}
+            title="Add camera"
+            aria-label="Add camera"
+          >
+            + Camera
+          </button>
         </div>
         <div className={styles.timeScale}>
           <div className={styles.timeScaleSpacer} />
@@ -225,17 +275,19 @@ export function EditTimeline() {
             className={styles.timeScaleRuler}
             ref={rulerReference}
             onMouseDown={handleTimelineMouseDown}
+            style={{ width: `${TIMELINE_TOTAL * PX_PER_SECOND}px` }}
           >
             {ticks.map((tick) => (
               <span
                 key={tick}
                 className={styles.tickLabel}
-                style={{ left: `${(tick / duration) * 100}%` }}
+                style={{ left: `${tick * PX_PER_SECOND}px` }}
               >
-                {tick.toFixed(1)}s
+                {tick}s
               </span>
             ))}
           </div>
+        </div>
         </div>
       </div>
       {contextMenu && (

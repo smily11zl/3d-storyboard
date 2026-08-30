@@ -39,6 +39,8 @@ interface CameraVisualization {
  *  - CameraHelper reads a stale matrixWorld in useFrame → jitter while paused */
 export function CameraIndicator({ gltfData }: CameraIndicatorProperties) {
   const visualizationsReference = useRef<CameraVisualization[]>([]);
+  // 新增相机（编辑态）时触发锥体重建——动态创建的相机节点在 scene 里，需重新 traverse。
+  const editingSegments = useStore((state) => state.editingSegments);
 
   useEffect(() => {
     const visualizations: CameraVisualization[] = [];
@@ -103,7 +105,7 @@ export function CameraIndicator({ gltfData }: CameraIndicatorProperties) {
       }
       visualizationsReference.current = [];
     };
-  }, [gltfData]);
+  }, [gltfData, editingSegments]);
 
   // Recompute frustum vertices each frame from the CURRENT camera
   // transform, and update color/dash from the current state.

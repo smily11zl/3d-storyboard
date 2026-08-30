@@ -27,10 +27,17 @@ def apply_full_segments(input_blend, segments, target_positions, output_blend):
     for segment in segments:
         cameras.setdefault(segment["camera_name"], []).append(segment)
 
+    # 2a. 删除「blend 有但 segments 无」的相机（编辑态删除相机轴）
+    segment_camera_names = set(cameras.keys())
+    for obj in list(bpy.data.objects):
+        if obj.type == "CAMERA" and obj.name not in segment_camera_names:
+            _delete_camera(obj)
+
+    # 2b. 重建每个相机的段（相机不存在则新建——编辑态新增相机轴）
     for camera_name, camera_segments in cameras.items():
         camera_obj = _find_camera(camera_name)
         if camera_obj is None:
-            continue
+            camera_obj = _create_camera(camera_name)
         camera_segments.sort(key=lambda segment: segment["start_time"])
         _rebuild_constraints(camera_obj, camera_segments)
         for segment in camera_segments:
@@ -87,7 +94,10 @@ def _rebuild_target_animations(segments):
     for target_name, segs in target_segments.items():
         target_obj = bpy.data.objects.get(target_name)
         if target_obj is None:
-            continue
+            # 新建 aim_target Empty（编辑态新增相机 + follow 段时）
+            bpy.ops.object.empty_add(type="PLAIN_AXES")
+            target_obj = bpy.context.object
+            target_obj.name = target_name
         # 清空旧 location 动画（保留其它数据），重建
         if target_obj.animation_data is None:
             target_obj.animation_data_create()
@@ -239,6 +249,43 @@ def _find_camera(camera_name):
         if obj.name == camera_name and obj.type == "CAMERA":
             return obj
     return None
+
+
+def _create_camera(camera_name):
+    """新建相机对象（编辑态新增相机轴用）。"""
+    import bpy
+
+    bpy.ops.object.camera_add()
+    camera_obj = bpy.context.object
+    camera_obj.name = camera_name
+    return camera_obj
+
+
+def _delete_camera(camera_obj):
+    """删除相机对象 + 它专属的 aim_target（被其它相机共享的 aim_target 保留）。"""
+    import bpy
+
+    target_names = set()
+    for constraint in camera_obj.constraints:
+        if constraint.type == "TRACK_TO" and constraint.target is not None:
+            target_names.add(constraint.target.name)
+
+    other_cameras = [
+        obj for obj in bpy.data.objects
+        if obj.type == "CAMERA" and obj.name != camera_obj.name
+    ]
+    for target_name in target_names:
+        target_obj = bpy.data.objects.get(target_name)
+        if target_obj is None:
+            continue
+        shared = any(
+            any(c.type == "TRACK_TO" and c.target == target_obj for c in cam.constraints)
+            for cam in other_cameras
+        )
+        if not shared:
+            bpy.data.objects.remove(target_obj)
+
+    bpy.data.objects.remove(camera_obj)
 
 
 def _rebuild_constraints(camera_obj, camera_segments):

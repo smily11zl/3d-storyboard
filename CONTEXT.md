@@ -39,10 +39,16 @@
 | **Easing (缓动)** | Acceleration/deceleration during motion, implemented via keyframe tangents (glTF CUBICSPLINE), not extra keyframes. |
 | **Edit Mode (编辑态)** | The global editing mode entered via the top-bar "Edit" button. UI switches to focused editing: simplified top bar (Discard + "Edit Mode" + Save), chat hidden, center dual viewports kept, bottom shows a timeline (scale + playhead) plus one segment track per camera. |
 | **Playhead (播放头)** | The vertical marker on the edit-mode timeline showing the currently viewed frame. Draggable; plays to preview a segment's motion. |
-| **Segment Track (段轨道)** | In edit mode, one horizontal lane per camera object at the bottom, holding that camera's segments in time order. |
+| **Segment Track (段轨道)** | In edit mode, one horizontal lane per camera object at the bottom, holding that camera's segments in time order. Tracks can be added/deleted in edit mode (add = new camera object + empty track + one initial segment; delete = remove the camera object + track + all its segments + its exclusive aim_target, shared targets kept). |
 | **Two-pose Editing (两 pose 编辑)** | Editing a simple (S) segment by changing its start/end pose (position + orientation) — drag in viewport + numeric fine-tune, both synced. |
 | **Constraint Editing (约束编辑)** | Editing a TRACK_TO segment by moving its target point; orientation recomputes via frontend lookAt. |
-| **Static Target (静态目标)** | A TRACK_TO target that is a stationary object; the frontend replays orientation via lookAt. Editable (drag the target point). |
+| **Static Target (静态目标)** | A TRACK_TO target that is stationary within each segment; the frontend replays orientation via lookAt using **that segment's own target position** (per-segment, from the aim_target animation). Editable (move that segment's target point — other segments unaffected). |
 | **Follow (跟随)** | A TRACK_TO target that is an animated object (a moving model). Not supported this version — such segments classify as complex (C). |
 | **Versioned Blend (版本化 blend)** | A saved edit writes a new `scene_vN.blend` (N increments from the original `scene.blend`), never overwriting — preserving edit history for manual switching. Chat source only; upload source uses flat files instead. |
 | **Upload Source (上传源)** | A `.blend` the user uploaded manually (not AI-generated). Its source and every saved edit live flat under `generate/upload_output/<timestamp>.blend`; each save writes a new file that becomes the new source, so the next edit builds on the last save. Tracked via `source` = `{type:'upload', file:'<timestamp>.blend'}`. |
+| **Segment Shift (平移)** | Dragging a segment's middle: start/end move together, duration unchanged (S and C segments alike). |
+| **Re-time (重定时)** | Dragging an S segment's edge to change duration: start/end pose values stay, linear interpolation re-runs, speed changes. |
+| **Trim (裁剪)** | Dragging a C segment's edge to change duration: sampled frames outside the range are cut, frames keep their values and speed. |
+| **Segment Duration (原始时长)** | The segment's duration at the moment it entered edit mode — the upper bound for dragging. Editable for S segments, read-only for C. |
+| **Effective Duration (有效时长)** | The segment's current `end − start`, a derived read-only value shown as `current / original`. |
+| **Fixed Timeline Range (固定时间轴范围)** | The edit-mode timeline shows a fixed 10-minute total length; segments lay out proportionally, and the effective total duration is marked by a vertical line plus a highlight from 0 to that line. |
