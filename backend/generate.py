@@ -65,15 +65,32 @@ def build_instruction(output_dir: Path, output_version: int, current_blend: str 
         "请先用 skill_view 重新加载 storyboard-scene-generator skill 的最新内容（可能已更新），"
         "不要依赖之前对话里的旧记忆。",
         f"输出目录：{output_dir}",
-        f"本次输出文件：{output_script} + {output_blend}",
     ]
+
     if current_blend:
         input_script = _blend_to_script(current_blend)
-        lines.append(
-            f"用户当前选中的版本：{current_blend}（对应 {input_script}）。"
-        )
+        has_script = (output_dir / input_script).exists()
+        lines.append(f"用户当前选中的版本：{current_blend}。")
+        if has_script:
+            # 情况 A：有对应脚本，基于脚本修改
+            lines.append(f"本次输出文件：{output_script} + {output_blend}")
+            lines.append(f"该版本有对应脚本 {input_script}，修改时基于它。")
+        else:
+            # 情况 B：无对应脚本（手动保存/直接改 blend 产生），只能增量改 blend
+            lines.append(f"本次输出文件：{output_blend}（只有 blend，没有脚本）")
+            lines.append(
+                f"该版本没有对应脚本（{input_script} 不存在），是手动保存/直接改 blend 产生的版本。\n"
+                f"【情况 B——必须严格遵守】\n"
+                f"1. 禁止写任何脚本文件（禁止创建 {output_script} 或任何 .py）。\n"
+                f"2. 禁止从零重建场景——从零重建会丢失 blend 里手动编辑的细节。\n"
+                f"3. 必须用 bpy.ops.wm.open_mainfile(\"{current_blend}\") 打开现有 blend，"
+                f"分析相机/NLA/约束/角色后只做增量修改，"
+                f"最后 bpy.ops.wm.save_as_mainfile(\"{output_blend}\") 保存。"
+            )
     else:
         lines.append("用户当前没有选中任何版本。")
+        lines.append(f"本次输出文件：{output_script} + {output_blend}")
+
     lines.append(
         "【修改基础的选择规则——必须严格遵守】\n"
         "1. 若用户消息里明确指定了要基于哪个版本（如「基于 v1 改」「在 v2 基础上」），"
