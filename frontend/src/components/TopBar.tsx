@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useStore } from '../store';
 import styles from './TopBar.module.css';
 
@@ -15,6 +15,9 @@ export function TopBar({ onOpenSettings }: TopBarProperties) {
   const shot = useStore((state) => state.shot);
   const setEditMode = useStore((state) => state.setEditMode);
   const fileInputReference = useRef<HTMLInputElement | null>(null);
+  const exportMp4 = useStore((state) => state.exportMp4);
+  const exportBlend = useStore((state) => state.exportBlend);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -86,6 +89,48 @@ export function TopBar({ onOpenSettings }: TopBarProperties) {
           >
             Edit
           </button>
+        )}
+        {shot && (
+          <div className={styles.exportGroup}>
+            <button
+              className={styles.editButton}
+              onClick={() => setExportOpen((open) => !open)}
+              title="Export"
+            >
+              Export
+            </button>
+            {exportOpen && (
+              <div className={styles.exportMenu}>
+                <button
+                  className={styles.exportMenuItem}
+                  onClick={() => {
+                    setExportOpen(false);
+                    void exportMp4('1080p');
+                  }}
+                >
+                  Export 1080p MP4
+                </button>
+                <button
+                  className={styles.exportMenuItem}
+                  onClick={() => {
+                    setExportOpen(false);
+                    void exportMp4('720p');
+                  }}
+                >
+                  Export 720p MP4
+                </button>
+                <button
+                  className={styles.exportMenuItem}
+                  onClick={() => {
+                    setExportOpen(false);
+                    void exportBlend();
+                  }}
+                >
+                  Export Blend
+                </button>
+              </div>
+            )}
+          </div>
         )}
         <button
           className={styles.iconButton}

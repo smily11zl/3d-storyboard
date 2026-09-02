@@ -15,7 +15,7 @@ echo "========================================="
 
 # Check venv
 if [ ! -f "$VENV_PYTHON" ]; then
-    echo "ERROR: Virtual env not found. Run: python3.11 -m venv .venv && .venv/bin/pip install fastapi uvicorn httpx python-multipart pytest pytest-asyncio hermes-agent"
+    echo "ERROR: Virtual env not found. Run: python3.11 -m venv .venv && .venv/bin/pip install fastapi uvicorn httpx python-multipart pytest pytest-asyncio hermes-agent imageio-ffmpeg"
     exit 1
 fi
 

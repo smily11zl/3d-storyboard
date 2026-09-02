@@ -8,7 +8,7 @@
 | **Camera View** | The left viewport locked to a specific camera's perspective. |
 | **Free View** | The right viewport with free orbit controls for exploring the scene. |
 | **Animation Clip** | A single animation track exported from Blender (may contain skeletal, object, or camera keyframes). |
-| **Export** | The output of a `.blend` → `.gltf` conversion, stored under `exports/<hash>/`. |
+| **glTF Export** | The output of a `.blend` → `.gltf` conversion, stored under `exports/<hash>/`. |
 | **Timeline** | The shared animation playback control (play/pause/frame position), synchronized across both viewports. |
 | **Generation** | An AI workflow that turns a text description into a Shot: Hermes Agent generates a `.blend` scene (with multiple camera setups), the backend converts it, and the viewer loads it. |
 | **Generation Task** | A single generation run, identified by its timestamped output directory. Only one runs at a time. |
@@ -48,7 +48,13 @@
 | **Upload Source (上传源)** | A `.blend` the user uploaded manually (not AI-generated). Its source and every saved edit live flat under `generate/upload_output/<timestamp>.blend`; each save writes a new file that becomes the new source, so the next edit builds on the last save. Tracked via `source` = `{type:'upload', file:'<timestamp>.blend'}`. |
 | **Segment Shift (平移)** | Dragging a segment's middle: start/end move together, duration unchanged (S and C segments alike). |
 | **Re-time (重定时)** | Dragging an S segment's edge to change duration: start/end pose values stay, linear interpolation re-runs, speed changes. |
-| **Trim (裁剪)** | Dragging a C segment's edge to change duration: sampled frames outside the range are cut, frames keep their values and speed. |
+| **Trim (裁剪)** | Dragging a C segment's edge to change duration: the full sampled keyframes are kept intact (non-destructive); rendering and saving filter them to the segment's current range, so dragging back restores the cut frames. |
 | **Segment Duration (原始时长)** | The segment's duration at the moment it entered edit mode — the upper bound for dragging. Editable for S segments, read-only for C. |
 | **Effective Duration (有效时长)** | The segment's current `end − start`, a derived read-only value shown as `current / original`. |
-| **Fixed Timeline Range (固定时间轴范围)** | The edit-mode timeline shows a fixed 10-minute total length; segments lay out proportionally, and the effective total duration is marked by a vertical line plus a highlight from 0 to that line. |
+| **Fixed Timeline Range (固定时间轴范围)** | The edit-mode timeline shows a fixed 10-minute total length at a fixed pixels-per-second ratio, horizontally scrollable; segments lay out by their start/end times, and the effective total duration is marked by a vertical line plus a highlight from 0 to that line. |
+| **Export (导出按钮)** | V7 top-bar button between Edit and Settings; its dropdown offers Export MP4 / Export Blend. |
+| **Full Shot Export (整段导出)** | Renders one camera's continuous `min(start)~max(end)` range to a single MP4; gaps show the previous segment's last frame. |
+| **Segment Export (每段导出)** | Renders each segment of a camera to its own MP4 (the segment's `start~end`). |
+| **Blend Export (导出 Blend)** | Copies the currently-viewed blend to the user-chosen folder; filename prefixed with `{Chat Name}_` when there is a chat session, otherwise keeps the original name (uploaded blends get no prefix). |
+| **Chat Name (聊天名称)** | The current chat session's `folder_name` (timestamp dir, e.g. `20260829_152737`), used as the export naming prefix. Empty when the shot came from a direct blend upload (no session) — exports then carry no prefix. |
+| **Blend Prefix (blend 前缀名)** | The current blend filename minus its extension (e.g. `scene_v3`). |

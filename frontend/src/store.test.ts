@@ -1,6 +1,24 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ShotSegment } from './types';
 import { useStore } from './store';
+import { startExportMp4, fetchExportStatus, exportBlendToDirectory } from './lib/exportApi';
+
+vi.mock('./lib/exportApi', () => ({
+  startExportMp4: vi.fn().mockResolvedValue('task123'),
+  fetchExportStatus: vi.fn().mockResolvedValue({
+    status: 'done',
+    progress: {
+      completed_files: 2,
+      total_files: 2,
+      current_file: null,
+      current_frame: 0,
+      current_total_frames: 0,
+    },
+    files: [],
+    error: null,
+  }),
+  exportBlendToDirectory: vi.fn().mockResolvedValue(['b.blend']),
+}));
 
 function makeSegment(
   camera: string,
@@ -145,5 +163,54 @@ describe('相机轴增删 store action', () => {
     useStore.getState().deleteCamera('cam_02');
     expect(useStore.getState().activeCameraName).toBe('cam_01');
     expect(useStore.getState().selectedSegment).toBeNull();
+  });
+});
+
+describe('V7 导出 store action', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('exportMp4 选目录后调 startExportMp4 并设置进度', async () => {
+    const picker = vi.fn().mockResolvedValue({});
+    vi.stubGlobal('window', { showDirectoryPicker: picker });
+    vi.stubGlobal('localStorage', { getItem: vi.fn(), setItem: vi.fn(), removeItem: vi.fn() });
+    useStore.setState({
+      shot: { export_hash: 'abc' } as never,
+      sessionList: [
+        {
+          id: 's1',
+          folder_name: 'folder1',
+          preview: 'my chat',
+          input_tokens: 0,
+          output_tokens: 0,
+          estimated_cost_usd: null,
+          message_count: 1,
+          has_output: true,
+          started_at: 0,
+        },
+      ],
+      currentSessionId: 's1',
+      blendVersions: [
+        { filename: 'scene_v3.blend', version: 3, mtime: 100, blend_hash: 'h', has_script: true },
+      ],
+    });
+    await useStore.getState().exportMp4('1080p');
+    expect(picker).toHaveBeenCalled();
+    expect(startExportMp4).toHaveBeenCalledWith('abc', 'folder1', 'scene_v3', '1080p');
+    expect(useStore.getState().exportProgress?.taskId).toBe('task123');
+  });
+
+  it('exportBlend 选目录后调 exportBlendToDirectory（无 session 时 chatName=chat）', async () => {
+    const picker = vi.fn().mockResolvedValue({});
+    vi.stubGlobal('window', { showDirectoryPicker: picker });
+    useStore.setState({
+      shot: { export_hash: 'abc' } as never,
+      sessionList: [],
+      currentSessionId: null,
+      blendVersions: [],
+    });
+    await useStore.getState().exportBlend();
+    expect(exportBlendToDirectory).toHaveBeenCalledWith('abc', '', expect.anything());
   });
 });

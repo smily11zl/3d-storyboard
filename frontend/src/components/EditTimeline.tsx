@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import type { ShotSegment } from '../types';
 import { PX_PER_SECOND, TIMELINE_TOTAL, effectiveEnd, hitZone, segmentPixels } from '../lib/timeline';
+import { ConfirmDialog } from './ConfirmDialog';
 import styles from './EditTimeline.module.css';
 
 interface ContextMenuState {
@@ -10,6 +11,10 @@ interface ContextMenuState {
   x: number;
   y: number;
 }
+
+type DeleteTarget =
+  | { type: 'camera'; camera_name: string }
+  | { type: 'segment'; camera_name: string; segment_name: string };
 
 /** 标签列宽度（box-sizing:border-box）：眼睛(20) + 相机名(110) + 加段按钮(20+4) + 删相机按钮(20+4)。 */
 const LABEL_WIDTH = 178;
@@ -28,6 +33,7 @@ export function EditTimeline() {
   const trimSegment = useStore((state) => state.trimSegment);
   const addCamera = useStore((state) => state.addCamera);
   const deleteCamera = useStore((state) => state.deleteCamera);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const isPlaying = useStore((state) => state.isPlaying);
   const setPlaying = useStore((state) => state.setPlaying);
   const activeCameraName = useStore((state) => state.activeCameraName);
@@ -212,11 +218,9 @@ export function EditTimeline() {
               </button>
               <button
                 className={styles.deleteCameraButton}
-                onClick={() => {
-                  if (window.confirm(`Delete camera "${camera.camera_name}" and all its segments?`)) {
-                    deleteCamera(camera.camera_name);
-                  }
-                }}
+                onClick={() =>
+                  setDeleteTarget({ type: 'camera', camera_name: camera.camera_name })
+                }
                 title={`Delete camera ${camera.camera_name}`}
                 aria-label={`Delete camera ${camera.camera_name}`}
               >
@@ -313,15 +317,39 @@ export function EditTimeline() {
             className={styles.contextMenuItem}
             onMouseDown={(event) => {
               event.stopPropagation();
-              if (window.confirm(`Delete segment "${contextMenu.segment_name}"?`)) {
-                deleteSegment(contextMenu.camera_name, contextMenu.segment_name);
-              }
+              setDeleteTarget({
+                type: 'segment',
+                camera_name: contextMenu.camera_name,
+                segment_name: contextMenu.segment_name,
+              });
               setContextMenu(null);
             }}
           >
             Delete
           </button>
         </div>
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title={deleteTarget.type === 'camera' ? 'Delete camera?' : 'Delete segment?'}
+          message={
+            deleteTarget.type === 'camera'
+              ? `Delete camera "${deleteTarget.camera_name}" and all its segments?`
+              : `Delete segment "${deleteTarget.segment_name}"?`
+          }
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          danger
+          onConfirm={() => {
+            if (deleteTarget.type === 'camera') {
+              deleteCamera(deleteTarget.camera_name);
+            } else {
+              deleteSegment(deleteTarget.camera_name, deleteTarget.segment_name);
+            }
+            setDeleteTarget(null);
+          }}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   );

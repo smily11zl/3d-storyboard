@@ -104,3 +104,39 @@
   background-color: #1ed760;
   color: #000000;
 }
+
+.exportGroup {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.exportMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 150px;
+  background: #1f1f1f;
+  border: 1px solid #3d3d3d;
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.exportMenuItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--color-text-primary);
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.exportMenuItem:hover {
+  background-color: #252525;
+}

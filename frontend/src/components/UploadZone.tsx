@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type DragEvent } from 'react';
 import { useStore } from '../store';
+import { ExportProgressBanner } from './ExportProgressBanner';
 import styles from './UploadZone.module.css';
 
 export function UploadZone() {
@@ -85,6 +86,7 @@ export function UploadZone() {
         {errorMessage && (
           <span className={styles.errorLabel}>{errorMessage}</span>
         )}
+        <ExportProgressBanner />
       </div>
     );
   }

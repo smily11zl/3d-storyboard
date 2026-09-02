@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import { ConfirmDialog } from './ConfirmDialog';
 import styles from './SegmentSidebar.module.css';
 
 const RAD_TO_DEG = 180 / Math.PI;
@@ -97,6 +98,10 @@ export function SegmentSidebar() {
   const setOrientationMode = useStore((state) => state.setOrientationMode);
   const setInterpolation = useStore((state) => state.setInterpolation);
   const deleteSegment = useStore((state) => state.deleteSegment);
+  const [segmentToDelete, setSegmentToDelete] = useState<{
+    camera_name: string;
+    segment_name: string;
+  } | null>(null);
   const retimeSegment = useStore((state) => state.retimeSegment);
   const trimSegment = useStore((state) => state.trimSegment);
   const setSegmentOriginalDuration = useStore((state) => state.setSegmentOriginalDuration);
@@ -346,16 +351,31 @@ export function SegmentSidebar() {
 
         <button
           className={styles.deleteButton}
-          onClick={() => {
-            if (window.confirm(`Delete segment "${segment.segment_name}"?`)) {
-              deleteSegment(segment.camera_name, segment.segment_name);
-            }
-          }}
+          onClick={() =>
+            setSegmentToDelete({
+              camera_name: segment.camera_name,
+              segment_name: segment.segment_name,
+            })
+          }
           title="Delete segment"
         >
           Delete
         </button>
       </div>
+      {segmentToDelete && (
+        <ConfirmDialog
+          title="Delete segment?"
+          message={`Delete segment "${segmentToDelete.segment_name}"?`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          danger
+          onConfirm={() => {
+            deleteSegment(segmentToDelete.camera_name, segmentToDelete.segment_name);
+            setSegmentToDelete(null);
+          }}
+          onClose={() => setSegmentToDelete(null)}
+        />
+      )}
     </aside>
   );
 }

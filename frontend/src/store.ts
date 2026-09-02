@@ -2,6 +2,23 @@ import * as THREE from 'three';
 import { create } from 'zustand';
 import type { SessionSummary, ShotMetadata, ShotSegment, BlendVersion, Pose, PositionKeyframe, RotationKeyframe, CameraInfo } from './types';
 import { clampSegmentTimes } from './lib/segmentTiming';
+import {
+  exportBlendToDirectory,
+  startExportMp4,
+  fetchExportStatus,
+} from './lib/exportApi';
+import { writeFilesToDirectory } from './lib/exportFiles';
+
+export interface ExportProgress {
+  taskId: string;
+  status: 'rendering' | 'composing' | 'done' | 'error' | 'cancelled';
+  completedFiles: number;
+  totalFiles: number;
+  currentFile: string | null;
+  currentFrame: number;
+  currentTotalFrames: number;
+  error: string | null;
+}
 
 interface StoreState {
   shot: ShotMetadata | null;
@@ -57,6 +74,21 @@ interface StoreState {
   loadBlendVersions: (exportHash: string) => Promise<void>;
   switchBlend: (blendHash: string) => Promise<void>;
 
+  /** V7 导出：导出当前 shot 为 MP4（给定分辨率）/ 复制 blend 到用户所选目录。 */
+  exportMp4: (resolution: string) => Promise<void>;
+  exportBlend: () => Promise<void>;
+  /** V7 异步导出的进度状态（进度条用）。 */
+  exportProgress: ExportProgress | null;
+  /** 导出相关弹窗提示（自定义 Modal 显示）。 */
+  exportAlert: string | null;
+  setExportAlert: (message: string | null) => void;
+  /** 刷新后恢复进行中的导出进度（目录句柄需重新选）。 */
+  restoreExportTask: () => Promise<void>;
+  /** 关闭/清除导出进度条。 */
+  clearExportProgress: () => void;
+  /** 取消当前导出（kill 后端任务 + Blender 子进程）。 */
+  cancelExport: () => Promise<void>;
+
   setSegmentPose: (
     key: string,
     which: 'start' | 'end',
@@ -109,6 +141,68 @@ interface StoreState {
   setPlaying: (playing: boolean) => void;
   setCurrentTime: (time: number) => void;
   reset: () => void;
+}
+
+function pickDirectory(): Promise<FileSystemDirectoryHandle | null> {
+  const picker = (window as unknown as {
+    showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>;
+  }).showDirectoryPicker;
+  if (!picker) {
+    return Promise.resolve(null);
+  }
+  return picker();
+}
+
+async function pollExportTask(
+  taskId: string,
+  directoryHandle: FileSystemDirectoryHandle,
+  folderName: string,
+): Promise<void> {
+  const written = new Set<string>();
+  for (;;) {
+    let status;
+    try {
+      status = await fetchExportStatus(taskId);
+    } catch (error) {
+      useStore.setState((current) => ({
+        exportProgress: current.exportProgress
+          ? { ...current.exportProgress, error: error instanceof Error ? error.message : 'Export status fetch failed' }
+          : null,
+      }));
+      localStorage.removeItem('export_task');
+      return;
+    }
+    useStore.setState({
+      exportProgress: {
+        taskId,
+        status: status.status as ExportProgress['status'],
+        completedFiles: status.progress.completed_files,
+        totalFiles: status.progress.total_files,
+        currentFile: status.progress.current_file,
+        currentFrame: status.progress.current_frame,
+        currentTotalFrames: status.progress.current_total_frames,
+        error: status.error,
+      },
+    });
+    for (const file of status.files) {
+      if (written.has(file.filename)) continue;
+      await writeFilesToDirectory(
+        directoryHandle,
+        [{ filename: file.filename, contentBase64: file.content_base64 }],
+        folderName,
+      );
+      written.add(file.filename);
+    }
+    if (
+      status.status === 'done' ||
+      status.status === 'error' ||
+      status.status === 'cancelled'
+    ) {
+      localStorage.removeItem('export_task');
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
 }
 
 function buildEditingSegments(
@@ -193,6 +287,8 @@ export const useStore = create<StoreState>((set, get) => ({
   shot: null,
   isLoading: false,
   errorMessage: null,
+  exportProgress: null,
+  exportAlert: null,
   activeCameraName: null,
   isPlaying: false,
   currentTime: 0,
@@ -349,6 +445,121 @@ export const useStore = create<StoreState>((set, get) => ({
       durationSeconds: metadata.duration_seconds,
       framesPerSecond: metadata.frames_per_second,
     });
+  },
+  exportMp4: async (resolution: string) => {
+    const state = get();
+    const shot = state.shot;
+    if (!shot) return;
+    const currentProgress = state.exportProgress;
+    if (
+      currentProgress &&
+      currentProgress.status !== 'done' &&
+      currentProgress.status !== 'error' &&
+      currentProgress.status !== 'cancelled'
+    ) {
+      set({
+        exportAlert:
+          'An export is already in progress. Wait for it to finish or cancel it first.',
+      });
+      return;
+    }
+    try {
+      const directoryHandle = await pickDirectory();
+      if (!directoryHandle) {
+        set({ errorMessage: 'Directory picker is not supported in this browser' });
+        return;
+      }
+      const session = state.sessionList.find((item) => item.id === state.currentSessionId);
+      const chatName = session?.folder_name || '';
+      const latestBlend = [...state.blendVersions].sort((a, b) => b.mtime - a.mtime)[0];
+      const blendPrefix = latestBlend ? latestBlend.filename.replace(/\.blend$/, '') : 'shot';
+      const folderName = chatName ? `${chatName}_${blendPrefix}` : blendPrefix;
+      const taskId = await startExportMp4(shot.export_hash, chatName, blendPrefix, resolution);
+      localStorage.setItem(
+        'export_task',
+        JSON.stringify({ taskId, exportHash: shot.export_hash, folderName }),
+      );
+      set({
+        errorMessage: null,
+        exportProgress: {
+          taskId,
+          status: 'rendering',
+          completedFiles: 0,
+          totalFiles: 0,
+          currentFile: null,
+          currentFrame: 0,
+          currentTotalFrames: 0,
+          error: null,
+        },
+      });
+      void pollExportTask(taskId, directoryHandle, folderName);
+    } catch (error) {
+      set({ errorMessage: error instanceof Error ? error.message : 'Export MP4 failed' });
+    }
+  },
+  restoreExportTask: async () => {
+    const raw = localStorage.getItem('export_task');
+    if (!raw) return;
+    let stored: { taskId: string; exportHash: string; folderName: string };
+    try {
+      stored = JSON.parse(raw);
+    } catch {
+      localStorage.removeItem('export_task');
+      return;
+    }
+    try {
+      const status = await fetchExportStatus(stored.taskId);
+      set({
+        exportProgress: {
+          taskId: stored.taskId,
+          status: status.status as ExportProgress['status'],
+          completedFiles: status.progress.completed_files,
+          totalFiles: status.progress.total_files,
+          currentFile: status.progress.current_file,
+          currentFrame: status.progress.current_frame,
+          currentTotalFrames: status.progress.current_total_frames,
+          error: status.error,
+        },
+      });
+      if (status.status === 'done' || status.status === 'error') {
+        localStorage.removeItem('export_task');
+      }
+    } catch {
+      localStorage.removeItem('export_task');
+    }
+  },
+  clearExportProgress: () => set({ exportProgress: null }),
+  setExportAlert: (message) => set({ exportAlert: message }),
+  cancelExport: async () => {
+    const progress = get().exportProgress;
+    if (!progress) return;
+    try {
+      const response = await fetch(`/api/shots/export-cancel/${progress.taskId}`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        throw new Error('Cancel export failed');
+      }
+    } catch (error) {
+      set({ errorMessage: error instanceof Error ? error.message : 'Cancel export failed' });
+    }
+  },
+  exportBlend: async () => {
+    const state = get();
+    const shot = state.shot;
+    if (!shot) return;
+    try {
+      const directoryHandle = await pickDirectory();
+      if (!directoryHandle) {
+        set({ errorMessage: 'Directory picker is not supported in this browser' });
+        return;
+      }
+      const session = state.sessionList.find((item) => item.id === state.currentSessionId);
+      const chatName = session?.folder_name || '';
+      await exportBlendToDirectory(shot.export_hash, chatName, directoryHandle);
+    } catch (error) {
+      set({ errorMessage: error instanceof Error ? error.message : 'Export Blend failed' });
+    }
   },
   setSelectedSegment: (segment) => set({ selectedSegment: segment }),
   setSegmentPose: (key, which, position, rotation) =>
@@ -619,6 +830,8 @@ export const useStore = create<StoreState>((set, get) => ({
       shot: null,
       isLoading: false,
       errorMessage: null,
+      exportProgress: null,
+      exportAlert: null,
       activeCameraName: null,
       isPlaying: false,
       currentTime: 0,

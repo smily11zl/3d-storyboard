@@ -12,6 +12,7 @@ import { EditToolbar } from './components/EditToolbar';
 import { EditTimeline } from './components/EditTimeline';
 import { SegmentSidebar } from './components/SegmentSidebar';
 import { ChatPanel } from './components/ChatPanel';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { SettingsModal } from './components/SettingsModal';
 import { useStore } from './store';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
@@ -174,6 +175,8 @@ function App() {
   const isLoading = useStore((state) => state.isLoading);
   const sidebarCollapsed = useStore((state) => state.sidebarCollapsed);
   const editMode = useStore((state) => state.editMode);
+  const exportAlert = useStore((state) => state.exportAlert);
+  const setExportAlert = useStore((state) => state.setExportAlert);
   const [gltfOriginal, setGltfOriginal] = useState<GLTF | null>(null);
   const [sceneLoading, setSceneLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -183,6 +186,11 @@ function App() {
     const openSettings = () => setSettingsOpen(true);
     window.addEventListener('open-settings', openSettings);
     return () => window.removeEventListener('open-settings', openSettings);
+  }, []);
+
+  // 刷新后恢复进行中的导出进度
+  useEffect(() => {
+    void useStore.getState().restoreExportTask();
   }, []);
 
   // Load GLTF once, outside Canvas
@@ -293,6 +301,15 @@ function App() {
         </div>
       </div>
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {exportAlert && (
+        <ConfirmDialog
+          title="Export in progress"
+          message={exportAlert}
+          confirmLabel="OK"
+          onConfirm={() => setExportAlert(null)}
+          onClose={() => setExportAlert(null)}
+        />
+      )}
     </div>
   );
 }

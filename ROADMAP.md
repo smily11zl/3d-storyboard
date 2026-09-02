@@ -97,6 +97,14 @@
 4. **时长块**：`Duration`（原始时长上限，S 可改 / C 只读）+ `Start`/`End`（可编辑）+ `Effective`（只读）
 5. 文档：docs/v6/{prd,plan,design,tasks}.md + CONTEXT.md 术语更新（Shift / Re-time / Trim / Segment Duration / Effective Duration / Fixed Timeline Range）
 
+## V7 — 导出 MP4 + 导出 Blend ✅ 已完成
+
+1. **Export 按钮**：顶部栏 Edit 和 Settings 之间，下拉 Export 1080p MP4 / Export 720p MP4 / Export Blend
+2. **Export MP4**：后端 Blender 无头**异步**渲染（task_id + 轮询进度），每个相机「整段 min~max 连续 + 每段 start~end」，**分块渲染防卡死**（每块 ≤50 帧重启 Blender）+ 逐个合成，compositor CurveRGB S 曲线拉对比防灰蒙蒙，落到 `{folder_name}_{blend前缀名}` 文件夹（无 session 时 `{blend前缀名}`）；进度胶囊 + ✕ 取消（确认弹窗）+ 刷新恢复 + 重复导出拦截
+3. **Export Blend**：复制当前 blend 到目标文件夹，文件名加 `{folder_name}_` 前缀（无 session 时原名）
+4. **自定义弹窗**：ConfirmDialog（ui-design 规范）替换系统弹窗（停止导出确认 / 重复导出提示 / 删除相机 / 删除段）
+5. 文档：docs/v7/{prd,plan,design,tasks}.md + CONTEXT.md 术语（Export / Full Shot Export / Segment Export / Blend Export / Chat Name / Blend Prefix）
+
 ## 后续候选（未排期）
 
 - 多任务队列

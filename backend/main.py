@@ -1,11 +1,16 @@
 """FastAPI application for Shot Viewer — .blend upload, glTF export, and static serving."""
+from __future__ import annotations
+
 import asyncio
+import base64
 import hashlib
 import json
 import os
 import shutil
 import tempfile
 import time
+import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -20,10 +25,12 @@ from backend.sessions import router as sessions_router
 from backend.sessions import open_finder_router
 from backend.shot_segments import parse_segments_sidecar
 from backend.edit_operations import parse_full_edit
+from backend.export_video_service import compose_single
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXPORT_SCRIPT = PROJECT_ROOT / "backend" / "export_shot.py"
 APPLY_EDIT_SCRIPT = PROJECT_ROOT / "backend" / "apply_edit.py"
+EXPORT_VIDEO_SCRIPT = PROJECT_ROOT / "backend" / "export_video.py"
 
 # Configurable with defaults
 EXPORTS_ROOT = Path(os.environ.get("EXPORTS_ROOT", PROJECT_ROOT / "exports"))
@@ -227,6 +234,237 @@ async def run_apply_edit(input_blend: str, operations_file: str, output_blend: s
     return True
 
 
+CHUNK_FRAMES = 50  # 每块最多渲染 50 帧，随后重启 Blender 进程，避免单进程长渲染累积卡死
+
+
+async def run_export_video(description_file: str, task: ExportTask | None = None) -> bool:
+    """分块渲染 PNG（每块重启 Blender 进程）+ 逐个合成 MP4。"""
+    with open(description_file) as file_handle:
+        desc = json.load(file_handle)
+    blend = desc["blend"]
+    output_dir = desc["output_dir"]
+    segments = desc["segments"]
+    resolution = desc.get("resolution", "1080p")
+    fps = desc.get("fps", 24)
+
+    # 构建任务列表（每个有段相机：1 整段 + N 段）
+    cameras: dict[str, list] = {}
+    for segment in segments:
+        cameras.setdefault(segment["camera_name"], []).append(segment)
+    task_specs = []
+    for camera_name, camera_segments in cameras.items():
+        min_start = min(seg["start_time"] for seg in camera_segments)
+        max_end = max(seg["end_time"] for seg in camera_segments)
+        task_specs.append(
+            {
+                "task_name": f"{camera_name}_full",
+                "camera_name": camera_name,
+                "frame_start": int(min_start * fps),
+                "frame_end": int(max_end * fps),
+            }
+        )
+        for segment in camera_segments:
+            task_specs.append(
+                {
+                    "task_name": f"{camera_name}_{segment['segment_name']}",
+                    "camera_name": camera_name,
+                    "frame_start": int(segment["start_time"] * fps),
+                    "frame_end": int(segment["end_time"] * fps),
+                }
+            )
+
+    # 写 manifest（任务元信息），主进程据此逐个合成
+    manifest_tasks = []
+    for spec in task_specs:
+        frames_dir = os.path.join(output_dir, "frames", spec["task_name"])
+        manifest_tasks.append(
+            {
+                "name": spec["task_name"],
+                "frames_dir": frames_dir,
+                "frame_start": spec["frame_start"],
+                "frame_count": spec["frame_end"] - spec["frame_start"] + 1,
+            }
+        )
+    with open(os.path.join(output_dir, "manifest.json"), "w") as file_handle:
+        json.dump({"fps": fps, "tasks": manifest_tasks}, file_handle)
+
+    # 构建块列表（每个任务按 CHUNK_FRAMES 分块）
+    chunks = []
+    for spec in task_specs:
+        frames_dir = os.path.join(output_dir, "frames", spec["task_name"])
+        for chunk_start in range(spec["frame_start"], spec["frame_end"] + 1, CHUNK_FRAMES):
+            chunk_end = min(chunk_start + CHUNK_FRAMES - 1, spec["frame_end"])
+            chunks.append(
+                {
+                    "task_name": spec["task_name"],
+                    "camera_name": spec["camera_name"],
+                    "frame_start": chunk_start,
+                    "frame_end": chunk_end,
+                    "frames_dir": frames_dir,
+                    "task_frame_start": spec["frame_start"],
+                }
+            )
+
+    composed: set[str] = set()
+    for chunk in chunks:
+        if task is not None and task.cancel_requested:
+            task.status = "cancelled"
+            task.error = "Export cancelled by user"
+            break
+        if task is not None:
+            # 渲染前：显示上一块完成的帧数
+            _write_task_progress(task, chunk, after_render=False)
+        chunk_desc = {
+            "blend": blend,
+            "output_dir": output_dir,
+            "resolution": resolution,
+            "chunk": chunk,
+        }
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as temp_file:
+            json.dump(chunk_desc, temp_file)
+            chunk_file = temp_file.name
+        try:
+            await _run_blender_chunk(chunk_file, task)
+        finally:
+            try:
+                os.unlink(chunk_file)
+            except OSError:
+                pass
+        if task is not None:
+            # 渲染后：显示本块完成的帧数（文件内进度以块为单位跳变）
+            _write_task_progress(task, chunk, after_render=True)
+        # 块渲染完，若任务的所有块都完成则写 .done，随后逐个合成
+        _mark_task_done_if_complete(output_dir, chunk, chunks)
+        if task is not None:
+            _compose_pending(task, composed)
+
+    if task is not None and task.cancel_requested:
+        task.status = "cancelled"
+        task.error = "Export cancelled by user"
+        return True
+    if task is not None:
+        _compose_pending(task, composed)
+    return True
+
+
+async def _run_blender_chunk(chunk_file: str, task: ExportTask | None = None) -> bool:
+    """调 Blender 渲染一个块（每次独立进程，强制释放累积资源）。"""
+    command = [
+        "blender", "--background",
+        "--python", str(EXPORT_VIDEO_SCRIPT),
+        "--",
+        chunk_file,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    if task is not None:
+        task.current_process = process
+    try:
+        stdout_bytes, stderr_bytes = await process.communicate()
+    finally:
+        if task is not None:
+            task.current_process = None
+    if process.returncode != 0:
+        if task is not None and task.cancel_requested:
+            return True  # 用户取消，不算错误
+        error_message = stderr_bytes.decode() or stdout_bytes.decode() or "Unknown error"
+        raise RuntimeError(f"Blender video export failed: {error_message[:500]}")
+    return True
+
+
+def _write_task_progress(task: ExportTask, chunk: dict, after_render: bool = False):
+    """更新 task 的进度字段（export_status 直接读 task；渲染阶段帧进度以块为单位跳变）。"""
+    if not task.output_dir:
+        return
+    total_frames = 0
+    manifest_file = os.path.join(task.output_dir, "manifest.json")
+    if os.path.isfile(manifest_file):
+        try:
+            with open(manifest_file) as file_handle:
+                manifest = json.load(file_handle)
+            for entry in manifest.get("tasks", []):
+                if entry.get("name") == chunk["task_name"]:
+                    total_frames = entry.get("frame_count", 0)
+                    break
+        except (json.JSONDecodeError, OSError):
+            pass
+    task_frame_start = chunk.get("task_frame_start", chunk["frame_start"])
+    if after_render:
+        current_frame = chunk["frame_end"] - task_frame_start + 1
+    else:
+        current_frame = max(0, chunk["frame_start"] - task_frame_start)
+    task.current_file = chunk["task_name"]
+    task.current_frame = current_frame
+    task.current_total_frames = total_frames
+
+
+def _mark_task_done_if_complete(output_dir: str, chunk: dict, chunks: list):
+    """若某任务的所有块都渲染完（每块最后帧文件存在），写 .done 标记。"""
+    task_name = chunk["task_name"]
+    frames_dir = chunk["frames_dir"]
+    for candidate in chunks:
+        if candidate["task_name"] != task_name:
+            continue
+        last_frame_file = os.path.join(frames_dir, f"frame_{candidate['frame_end']:04d}.png")
+        if not os.path.isfile(last_frame_file):
+            return
+    marker = os.path.join(frames_dir, ".done")
+    if not os.path.isfile(marker):
+        with open(marker, "w") as file_handle:
+            file_handle.write("done")
+
+
+def _load_fps(export_hash: str) -> int:
+    """读 shot metadata 的帧率（默认 24）。"""
+    metadata = load_shot_metadata(export_hash)
+    if metadata:
+        fps = metadata.get("frames_per_second")
+        if fps:
+            return int(fps)
+    return 24
+
+
+def _compose_pending(task: ExportTask, composed: set[str]):
+    """逐个合成已渲染完（.done 标记存在）但未合成的文件，追加到 task.files。"""
+    if not task.output_dir:
+        return
+    manifest_file = os.path.join(task.output_dir, "manifest.json")
+    if not os.path.isfile(manifest_file):
+        return
+    try:
+        with open(manifest_file) as file_handle:
+            manifest = json.load(file_handle)
+    except (json.JSONDecodeError, OSError):
+        return
+    fps = manifest.get("fps", 24)
+    for entry in manifest.get("tasks", []):
+        name = entry.get("name")
+        if not name or name in composed:
+            continue
+        marker = os.path.join(entry.get("frames_dir", ""), ".done")
+        if not os.path.isfile(marker):
+            continue
+        try:
+            compose_single(entry, task.output_dir, fps)
+        except Exception as error:
+            task.status = "error"
+            task.error = f"Compose failed for {name}: {error}"
+            return
+        composed.add(name)
+        mp4_path = os.path.join(task.output_dir, f"{name}.mp4")
+        task.current_file = name
+        task.files.append(
+            {
+                "filename": f"{name}.mp4",
+                "content_base64": base64.b64encode(Path(mp4_path).read_bytes()).decode(),
+            }
+        )
+        task.completed_files += 1
+
+
 def next_blend_version(directory: Path) -> int:
     """返回下一个 blend 版本号（scene_vN.blend 的 N，从 2 起）。"""
     version_numbers = []
@@ -243,6 +481,172 @@ def next_blend_version(directory: Path) -> int:
 class EditRequest(BaseModel):
     segments: list[dict]
     target_positions: dict[str, list[float]] | None = None
+
+
+class ExportBlendRequest(BaseModel):
+    chat_name: str = ""
+
+
+def _resolve_source_blend(export_hash: str) -> Path:
+    """读当前 shot 的源 blend 路径（chat/upload 统一）。"""
+    current_metadata = load_shot_metadata(export_hash)
+    if current_metadata is None:
+        raise HTTPException(status_code=404, detail="Shot not found")
+    source = current_metadata.get("source")
+    if source and source.get("type") == "upload":
+        source_blend = _resolve_upload_blend(source)
+        if source_blend is None or not source_blend.is_file():
+            raise HTTPException(status_code=404, detail="源 blend 不存在，请重新上传")
+        return source_blend
+    if source and source.get("type") == "chat":
+        folder = _resolve_chat_folder(source)
+        if folder is None:
+            raise HTTPException(status_code=404, detail="该 shot 无源信息（旧数据），请重新生成")
+        source_blend = get_latest_blend(folder)
+        if source_blend is None:
+            raise HTTPException(status_code=404, detail="源 blend 不存在（源目录为空）")
+        return source_blend
+    raise HTTPException(
+        status_code=404,
+        detail="该 shot 无源信息（旧数据），请重新上传或重新生成",
+    )
+
+
+@application.post("/api/shots/{export_hash}/export-blend")
+async def export_blend(export_hash: str, request: ExportBlendRequest):
+    """复制当前 blend：读源 blend，返回命名后的文件内容（前端写入所选目录）。"""
+    source_blend = _resolve_source_blend(export_hash)
+    filename = (
+        f"{request.chat_name}_{source_blend.name}" if request.chat_name else source_blend.name
+    )
+    content = source_blend.read_bytes()
+    return {"filename": filename, "content_base64": base64.b64encode(content).decode()}
+
+
+class ExportMp4Request(BaseModel):
+    chat_name: str = ""
+    blend_prefix: str = ""
+    resolution: str = "1080p"
+
+
+@dataclass
+class ExportTask:
+    task_id: str
+    export_hash: str
+    resolution: str
+    total_files: int
+    source_blend: str
+    segments: list
+    status: str = "rendering"
+    completed_files: int = 0
+    current_file: str | None = None
+    current_frame: int = 0
+    current_total_frames: int = 0
+    files: list = field(default_factory=list)
+    error: str | None = None
+    output_dir: str | None = None
+    cancel_requested: bool = False
+    current_process: asyncio.subprocess.Process | None = None
+
+
+EXPORT_TASKS: dict[str, ExportTask] = {}
+
+
+@application.post("/api/shots/{export_hash}/export-mp4")
+async def export_mp4(export_hash: str, request: ExportMp4Request):
+    """启动异步导出任务，返回 task_id。"""
+    source_blend = _resolve_source_blend(export_hash)
+    metadata = load_shot_metadata(export_hash)
+    segments = (metadata or {}).get("segments", [])
+
+    # 总文件数 = 每个有段相机 1 整段 + N 段
+    segment_counts: dict[str, int] = {}
+    for segment in segments:
+        name = segment.get("camera_name")
+        if name:
+            segment_counts[name] = segment_counts.get(name, 0) + 1
+    total_files = sum(1 + count for count in segment_counts.values())
+
+    task = ExportTask(
+        task_id=uuid.uuid4().hex,
+        export_hash=export_hash,
+        resolution=request.resolution,
+        total_files=total_files,
+        source_blend=str(source_blend),
+        segments=segments,
+    )
+    EXPORT_TASKS[task.task_id] = task
+    asyncio.create_task(_run_export_task(task))
+    return {"task_id": task.task_id}
+
+
+@application.get("/api/shots/export-status/{task_id}")
+async def export_status(task_id: str):
+    """返回导出任务的进度 + 已完成文件。"""
+    task = EXPORT_TASKS.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {
+        "status": task.status,
+        "progress": {
+            "completed_files": task.completed_files,
+            "total_files": task.total_files,
+            "current_file": task.current_file,
+            "current_frame": task.current_frame,
+            "current_total_frames": task.current_total_frames,
+        },
+        "files": task.files,
+        "error": task.error,
+    }
+
+
+@application.post("/api/shots/export-cancel/{task_id}")
+async def export_cancel(task_id: str):
+    """取消导出任务：标记取消 + kill 当前 Blender 子进程。"""
+    task = EXPORT_TASKS.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.cancel_requested = True
+    if task.current_process is not None:
+        try:
+            task.current_process.kill()
+        except ProcessLookupError:
+            pass
+    return {"ok": True}
+
+
+async def _run_export_task(task: ExportTask):
+    """后台渲染 + 合成，更新 task 状态。"""
+    try:
+        output_dir = tempfile.mkdtemp(prefix="export_mp4_")
+        task.output_dir = output_dir
+        description = {
+            "blend": task.source_blend,
+            "output_dir": output_dir,
+            "segments": task.segments,
+            "resolution": task.resolution,
+            "fps": _load_fps(task.export_hash),
+        }
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as temp_file:
+            json.dump(description, temp_file)
+            desc_file = temp_file.name
+        try:
+            await run_export_video(desc_file, task)
+        finally:
+            try:
+                os.unlink(desc_file)
+            except OSError:
+                pass
+
+        # 渲染 + 逐个合成已在 run_export_video 内完成
+        task.current_file = None
+        task.current_frame = 0
+        task.current_total_frames = 0
+        if not task.cancel_requested:
+            task.status = "done"
+    except Exception as error:  # noqa: BLE001 - 后台任务兜底，避免未处理异常
+        task.status = "error"
+        task.error = str(error)
 
 
 def save_shot_metadata(export_hash: str, metadata: dict):
